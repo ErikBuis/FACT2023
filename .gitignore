@@ -3,3 +3,7 @@
 **/data/coco/train2017/**
 **/data/coco/val2017/**
 **/data/vg/VG_100k/**
+
+# Ignore cache files.
+**/__pycache__/**
+**/.vector_cache/**
