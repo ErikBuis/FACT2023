@@ -1,5 +1,5 @@
-# Training datasets.
-LaViSE/data/coco/annotations/**
-LaViSE/data/coco/train2017/**
-LaViSE/data/coco/val2017/**
-LaViSE/data/vg/VG_100k/**
+# Ignore the raw dataset files.
+**/data/coco/annotations/**
+**/data/coco/train2017/**
+**/data/coco/val2017/**
+**/data/vg/VG_100k/**
