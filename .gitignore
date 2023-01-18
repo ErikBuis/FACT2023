@@ -3,7 +3,19 @@
 **/data/coco/train2017/**
 **/data/coco/val2017/**
 **/data/vg/VG_100k/**
+**/data/vg/VG_100K_2/**
+**/data/vg/visual_genome_python_driver/**
+**/data/**.pkl
+**/data/**.pth
+**/data/**.json
 
 # Ignore cache files.
 **/__pycache__/**
 **/.vector_cache/**
+
+# Ignore Lisa job files.
+**.job
+
+# Ignore the raw outputs of the training process.
+**/outputs/**
+**.out
