@@ -1,12 +1,15 @@
 import argparse
+import os
 import pathlib
 from typing import Optional, Tuple
 
 import matplotlib.pyplot as plt
+import numpy as np
+import torch
+import torch.nn as nn
 import wandb
-from image_datasets import *
+from image_datasets import MyCocoSegmentation, VisualGenome, data_transforms
 from model_loader import setup_explainer
-from torch.nn import Upsample
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
 from torch.utils.data.dataset import random_split
@@ -14,344 +17,453 @@ from torchtext.vocab import GloVe
 from train_helpers import CSMRLoss, set_bn_eval
 
 
-def train_one_epoch(
-    epoch: int,
-    model: torch.nn.Module,
-    loss_fn: torch.nn.Module,
-    optimizer: torch.optim.Optimizer, # type: ignore
-    train_loader: DataLoader,
-    embeddings: torch.Tensor,
-    output_path: pathlib.Path,
-    train_label_idx: Optional[int] = None,
-    k: int = 5
-    ) -> Tuple[float, float]:
-    """ Train one epoch of the model.
+def set_seed(seed: int):
+    """
+    Set a seed for all random number generators.
 
     Args:
+        seed (int): The seed to use.
+    """
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+
+
+def train_one_epoch(args: argparse.Namespace,
+                    model: nn.Module,
+                    loss_fn: nn.Module,
+                    train_loader: DataLoader,
+                    embeddings: torch.Tensor,
+                    epoch: int,
+                    optimizer: torch.optim.Optimizer,
+                    train_label_indices: Optional[np.ndarray] = None,
+                    ks: list[int] = [1, 5, 10, 20]) -> Tuple[float, float]:
+    """
+    Train one epoch of the model.
+
+    Args:
+        args (argparse.Namespace): The command line arguments.
+        model (nn.Module): The model to train.
+        loss_fn (nn.Module): The loss function to use.
+        train_loader (DataLoader): The training set data loader.
+        embeddings (torch.Tensor): The ground-truth category embeddings.
+            Shape: [embedding_dim, num_categories]
         epoch (int): The current epoch.
-        model (torch.nn.Module): The model to train.
-        loss_fn (torch.nn.Module): The loss function to use.
         optimizer (torch.optim.Optimizer): The optimizer to use.
-        train_loader (torch.utils.data.DataLoader): The training data loader.
-        embeddings (torch.Tensor): The embeddings to use.
-        output_path (pathlib.Path): The path to save the model.
-        train_label_idx (int):  The index of the label to train on.
-        k (int, optional):  The number of top predictions to consider. Defaults to 5.
+        train_label_indices (Optional[np.ndarray], optional): The indices of
+            the labels to train on. Defaults to None.
+        ks (list[int], optional): List of k-values. Each k represents the
+            number of top category predictions to consider for accuracy
+            calculation. Defaults to [1, 5, 10, 20].
 
     Returns:
-        Tuple[float, float]: 
+        Tuple[float, float]:
+            - The average training loss per sample.
+            - The average training accuracy@1 per sample.
     """
-    print(f"\nEpoch {epoch} starting.")
-    
-    epoch_loss = 0.0
-    num_batch = len(train_loader)
-    correct = 0.0
-    top_k_correct = 0.0
-    
+    # Set model to training mode.
     model.train()
     model.apply(set_bn_eval)
-    
-    for batch_index, batch in enumerate(train_loader):
-        # Get data
-        data, target, mask = batch[0].cuda(), batch[1].squeeze(0).cuda(), batch[2].squeeze(0).cuda()
-        predict = data.clone()
-        
-        for name, module in model._modules.items(): # type: ignore
-            if name is 'fc':
-                predict = torch.flatten(predict, 1)
-            predict = module(predict)
-            if name is args.layer:
-                if torch.sum(mask) > 0:
-                    predict = predict * mask
-                else:
-                    continue
-        
-        # Calculate loss
-        loss = loss_fn(predict, target, embeddings, train_label_idx)
-        
-        # This code is taking the dot product of the "predict" variable and "embeddings" variable, 
-        # normalizing it and then sorting the result in descending order.
-        # The final result is the top k indices of the sorted dot product of "predict" and "embeddings" variables, 
-        # where k is specified by the variable "k".
-        sorted_predict = torch.argsort(torch.mm(predict, embeddings) /
-                                       torch.mm(torch.sqrt(torch.sum(predict ** 2, dim=1, keepdim=True)),
-                                                torch.sqrt(torch.sum(embeddings ** 2,
-                                                                     dim=0, keepdim=True))),
-                                       dim=1, descending=True)[:, :k]
-        
-        # Calculate accuracy
-        for i, pred in enumerate(sorted_predict):
-            correct += target[i, pred[0]].detach().item()
-            top_k_correct += (torch.sum(target[i, pred]) > 0).detach().item()
 
-        # Backward
+    # Initialize variables.
+    amount_batches = len(train_loader)
+    ks = sorted(set(ks).union((1,)))
+    loss_train = 0
+    correct_train = {k: 0 for k in ks}
+
+    # Iterate over the training set.
+    for batch_idx, (imgs, targets, masks) in enumerate(train_loader, start=1):
+        # Move batch data to GPU.
+        imgs = imgs.cuda()
+        targets, masks = targets.squeeze(0).cuda(), masks.squeeze(0).cuda()
+
+        # Forward pass.
+        # We can't use `model(imgs)` directly because we need to apply the
+        # mask to an intermediate value of the model.
+        preds = imgs.clone()
+        for name, module in model._modules.items():
+            if name == args.classifier_name:
+                preds = torch.flatten(preds, 1)
+            preds = module(preds)
+            if name == args.layer:
+                if torch.sum(masks) > 0:
+                    preds = preds * masks
+
+        # Compute the cosine similarity between each prediction and each
+        # ground-truth category embedding. Then sorting the results in
+        # descending order, so that the top `k` indices represent the
+        # categories that are most similar to the model's prediction.
+        cat_preds_per_sample = torch.argsort(
+            (preds @ embeddings) /
+            (torch.sqrt(torch.sum(preds**2, dim=1, keepdim=True)) @
+             torch.sqrt(torch.sum(embeddings**2, dim=0, keepdim=True))),
+            dim=1,
+            descending=True
+        )[:, :max(ks)]
+
+        # Calculate accuracy.
+        for i, cat_preds in enumerate(cat_preds_per_sample):
+            for k in ks:
+                correct_train[k] += targets[i, cat_preds[:k]] \
+                    .any().detach().item()
+
+        # Calculate loss.
+        loss = loss_fn(preds, targets, embeddings, train_label_indices)
+
+        # Update loss.
+        loss_train += loss.data.detach().item()
+
+        # Backward propagation.
         optimizer.zero_grad()
         if loss.requires_grad:
             loss.backward()
             optimizer.step()
 
-        # Print log
-        if batch_index % 10 == 0:
-            train_log = 'Epoch {:2d}\tLoss: {:.6f}\tTrain: [{:4d}/{:4d} ({:.0f}%)]'.format(
-                epoch, loss.cpu().item(),
-                batch_index, num_batch,
-                100. * batch_index / num_batch)
-            print(train_log)
+        # Print logging data.
+        if batch_idx % 10 == 0 or batch_idx == amount_batches:
+            epoch_chars = len(str(args.epochs))
+            batch_chars = len(str(amount_batches))
+            print(f"[Epoch {epoch:{epoch_chars}d}: "
+                  f"{batch_idx:{batch_chars}d}/{amount_batches} "
+                  f"({int(batch_idx / amount_batches * 100):3d}%)] "
+                  f"Loss: {loss.cpu().item():.6f}")
             if args.wandb:
-                wandb.log({'Iter_Train_Loss': loss})
+                wandb.log({"Iter_Train_Loss": loss})
 
-        # Save checkpoint
-        if batch_index % args.save_every == 0:
-            torch.save({
-                'epoch': epoch,
-                'state_dict': model.state_dict(),
-                'optimizer': optimizer.state_dict()
-            }, os.path.join(output_path,
-                            'ckpt_tmp.pth.tar'))
+        # Save checkpoint.
+        if batch_idx % args.save_every == 0:
+            torch.save(
+                {
+                    "epoch": epoch,
+                    "state_dict": model.state_dict(),
+                    "optimizer": optimizer.state_dict()
+                },
+                os.path.join(args.save_dir, "ckpt_tmp.pth.tar")
+            )
 
-        # Update loss
-        epoch_loss += loss.data.detach().item()
-        
-        # Free memory
+        # Free memory.
         torch.cuda.empty_cache()
 
-    epoch_loss /= len(train_loader.dataset)
-    train_acc = correct / (len(train_loader) * train_loader.batch_size) * 100
-    train_top_k_acc = top_k_correct / (len(train_loader) * train_loader.batch_size * k) * 100
-    
-    print(f"\nTrain average loss: {epoch_loss:.6f}")
-    print(f"Train top-1 accuracy: {train_acc:.2f}%")
-    print(f"Train top-5 accuracy: {train_top_k_acc:.2f}%")
-    
-    return epoch_loss, train_acc
+    # Calculate average loss and average accuracy per sample.
+    loss_train /= len(train_loader.dataset)
+    accs_train = {k: correct_train[k] / len(train_loader.dataset) * 100
+                  for k in ks}
+    print()
+    print(f"Train average loss: {loss_train:.6f}")
+    for k in ks:
+        print(f"Train top-{k} accuracy: {accs_train[k]:.2f}%")
+
+    return loss_train, accs_train[1]
 
 
-def validate(
-    model: torch.nn.Module,
-    loss_fn: torch.nn.Module,
-    valid_loader: DataLoader,
-    embeddings: torch.Tensor,
-    train_label_idx: Optional[int] = None,
-    k: int = 5
-    ) -> Tuple[float, float]:
-    """ Validate the model.
+def validate(args: argparse.Namespace,
+             model: nn.Module,
+             loss_fn: nn.Module,
+             valid_loader: DataLoader,
+             embeddings: torch.Tensor,
+             train_label_indices: Optional[np.ndarray] = None,
+             ks: list[int] = [1, 5, 10, 20]) -> Tuple[float, float]:
+    """
+    Validate the model.
 
     Args:
-        model (torch.nn.Module): The model to validate.
-        loss_fn (torch.nn.Module): The loss function to use.
-        valid_loader (DataLoader): The validation data loader.
-        embeddings (torch.Tensor): The embeddings to use.
-        train_label_idx (Optional[int], optional): The index of the label to train on. Defaults to None.
-        k (int, optional): The number of top predictions to consider. Defaults to 5.
+        args (argparse.Namespace): The command line arguments.
+        model (nn.Module): The model to train.
+        loss_fn (nn.Module): The loss function to use.
+        valid_loader (DataLoader): The validation set data loader.
+        embeddings (torch.Tensor): The ground-truth category embeddings.
+            Shape: [embedding_dim, num_categories]
+        train_label_indices (Optional[np.ndarray], optional): The indices of
+            the labels to train on. Defaults to None.
+        ks (list[int], optional): List of k-values. Each k represents the
+            number of top category predictions to consider for accuracy
+            calculation. Defaults to [1, 5, 10, 20].
 
     Returns:
-        Tuple[float, float]: The validation loss and accuracy.
+        Tuple[float, float]:
+            - The average validation loss per sample.
+            - The average validation accuracy@1 per sample.
     """
-    # Set model to evaluation mode
+    # Set model to evaluation mode.
     model.eval()
-    
-    # Initialize variables
-    valid_loss = 0
-    correct = 0.0
-    top_k_correct = 0.0
-    
-    for batch_index, batch in enumerate(valid_loader):
+
+    # Initialize variables.
+    ks = sorted(set(ks).union((1,)))
+    loss_valid = 0
+    correct_valid = {k: 0 for k in ks}
+
+    # Iterate over the validation set.
+    for imgs, targets, masks in valid_loader:
         with torch.no_grad():
-            # Get data
-            data, target, mask = batch[0].cuda(), batch[1].squeeze(0).cuda(), batch[2].squeeze(0).cuda()
-            predict = data.clone()
-            
-            for name, module in model._modules.items(): # type: ignore
-                if name == 'classifier' or name == 'fc':
-                    if args.model == 'mobilenet':
-                        predict = torch.mean(predict, dim=[2, 3])
-                    else:
-                        predict = torch.flatten(predict, 1)
-                predict = module(predict)
+            # Move batch data to GPU.
+            imgs = imgs.cuda()
+            targets, masks = targets.squeeze(0).cuda(), masks.squeeze(0).cuda()
+
+            # Forward pass.
+            # We can't use `model(imgs)` directly because we need to apply the
+            # mask to an intermediate value of the model.
+            preds = imgs.clone()
+            for name, module in model._modules.items():
+                if name == args.classifier_name:
+                    preds = torch.flatten(preds, 1)
+                preds = module(preds)
                 if name == args.layer:
-                    predict = predict * mask
-                 
-            sorted_predict = torch.argsort(torch.mm(predict, embeddings) /
-                                           torch.mm(torch.sqrt(torch.sum(predict ** 2, dim=1, keepdim=True)),
-                                                    torch.sqrt(torch.sum(embeddings ** 2,dim=0, keepdim=True))),
-                                           dim=1, descending=True)[:, :k]
-            
-            # Calculate accuracy
-            for i, pred in enumerate(sorted_predict):
-                correct += target[i, pred[0]].detach().item()
-                top_k_correct += (torch.sum(target[i, pred]) > 0).detach().item()
-                
-            # Calculate loss
-            valid_loss += loss_fn(predict, target, embeddings, train_label_idx).data.detach().item()
-        
-        # Free memory
+                    if torch.sum(masks) > 0:
+                        preds = preds * masks
+
+            # Compute the cosine similarity between each prediction and each
+            # ground-truth category embedding. Then sorting the results in
+            # descending order, so that the top `k` indices represent the
+            # categories that are most similar to the model's prediction.
+            cat_preds_per_sample = torch.argsort(
+                (preds @ embeddings) /
+                (torch.sqrt(torch.sum(preds**2, dim=1, keepdim=True)) @
+                 torch.sqrt(torch.sum(embeddings**2, dim=0, keepdim=True))),
+                dim=1,
+                descending=True
+            )[:, :max(ks)]
+
+            # Calculate accuracy.
+            for i, cat_preds in enumerate(cat_preds_per_sample):
+                for k in ks:
+                    correct_valid[k] += targets[i, cat_preds[:k]] \
+                        .any().detach().item()
+
+            # Calculate loss.
+            loss = loss_fn(preds, targets, embeddings, train_label_indices)
+
+            # Update loss.
+            loss_valid += loss.data.detach().item()
+
+        # Free memory.
         torch.cuda.empty_cache()
 
-    valid_loss /= len(valid_loader.dataset)
-    valid_acc = correct / (len(valid_loader) * valid_loader.batch_size) * 100
-    valid_top_k_acc = top_k_correct / (len(valid_loader) * valid_loader.batch_size * k) * 100
-    
-    print(f"\nValid average loss: {valid_loss:.6f}")
-    print(f"Valid top-1 accuracy: {valid_acc:.2f}%")
-    print(f"Valid top-5 accuracy: {valid_top_k_acc:.2f}%")
-    
-    return valid_loss, valid_acc
+    # Calculate average loss and average accuracy per sample.
+    loss_valid /= len(valid_loader.dataset)
+    accs_valid = {k: correct_valid[k] / len(valid_loader.dataset) * 100
+                  for k in ks}
+    print()
+    print(f"Valid average loss: {loss_valid:.6f}")
+    for k in ks:
+        print(f"Valid top-{k} accuracy: {accs_valid[k]:.2f}%")
+
+    return loss_valid, accs_valid[1]
 
 
-def main(args: argparse.Namespace, train_rate: float =0.9) -> None:
-    """ Train a model on the specified dataset
+def main(args: argparse.Namespace):
+    """
+    Train a model on the specified dataset.
 
     Args:
-        args (argparse.Namespace): The arguments
-        train_rate (float, optional): The percentage of the dataset to use for training. Defaults to 0.9.
-
-    Raises:
-        NotImplementedError: If the model is not implemented
+        args (argparse.Namespace): The command line arguments.
     """
-    if not args.name: # if name is not specified, create a name based on the parameters
-        args.name = 'vsf_%s_%s_%s_%.1f' % (args.refer, args.model, args.layer, args.anno_rate)
-    if args.random: # if random is specified, add random to the name
-        args.name += '_random'
+    # Make sure the run is deterministic and reproducible.
+    set_seed(args.seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
-    # Set up output path
-    args.save_dir = args.save_dir + '/' + args.name + '/'
+    # Set up run name.
+    if not args.name:
+        args.name = f"vsf_{args.refer}_{args.model}_{args.layer}_" \
+            f"{args.anno_rate:.1f}"
+    if args.random:
+        args.name += "_random"
+
+    # Set up output path.
+    args.save_dir = os.path.join(args.save_dir, args.name)
     if not os.path.exists(args.save_dir):
-        os.mkdir(args.save_dir)
+        os.makedirs(args.save_dir)
 
-    # Wandb logging
+    # Set up Wandb logging.
     if args.wandb:
-        wandb_id_file_path = pathlib.Path(args.save_dir + '/'  + 'runid.txt')
-        print('Creating new wandb instance...', wandb_id_file_path)
-        run = wandb.init(project="temporal_scale", name=args.name, config=args) # type: ignore
-        wandb_id_file_path.write_text(str(run.id)) # type: ignore
-        
-    # load GloVe word embeddings
-    word_embedding = GloVe(name='6B', dim=args.word_embedding_dim) 
-    torch.cuda.empty_cache() # clear cuda cache
+        wandb_id_file_path = pathlib.Path(os.path.join(args.save_dir,
+                                                       "runid.txt"))
+        print("Creating new wandb instance...", wandb_id_file_path)
+        run = wandb.init(project="temporal_scale",
+                         name=args.name, config=args)
+        wandb_id_file_path.write_text(str(run.id))
 
-    # Set up model
-    model = setup_explainer(args, random_feature=args.random) # load model
-    parameters = model.fc.parameters() # get parameters of the classifier # type: ignore
-    model = model.cuda() # move model to GPU
-    optimizer = torch.optim.Adam(parameters, lr=1e-4)
+    # Set up GloVe word embeddings.
+    word_embedding = GloVe(name="6B", dim=args.word_embedding_dim)
+    torch.cuda.empty_cache()
+
+    # Set up model, optimizer, scheduler and loss function.
+    model = setup_explainer(args, random_feature=args.random)
+    model = model.cuda()
+    optimizer = torch.optim.Adam(model.fc.parameters(), lr=1e-4)
     scheduler = ReduceLROnPlateau(optimizer, verbose=True)
-
-    # load Visual Genome dataset
-    if args.refer == 'vg': 
-        dataset = VisualGenome(root_dir='data', transform=data_transforms['val'])
-        datasets = {}
-        train_size = int(train_rate * len(dataset))
-        test_size = len(dataset) - train_size
-        torch.manual_seed(0)
-        datasets['train'], datasets['val'] = random_split(dataset, [train_size, test_size])
-        label_index_file = os.path.join('./data/vg', "vg_labels.pkl")
-        with open(label_index_file, 'rb') as f:
-            labels = pickle.load(f)
-        label_index = []
-        for label in labels:
-            label_index.append(word_embedding.stoi[label]) # type: ignore
-        np.random.seed(0)
-        train_label_index = np.random.choice(range(len(label_index)), int(len(label_index) * args.anno_rate))
-        word_embeddings_vec = word_embedding.vectors[label_index].T.cuda() # type: ignore
-    
-    # load COCO dataset
-    elif args.refer == 'coco': 
-        datasets = {'val': MyCocoSegmentation(root='./data/coco/val2017',
-                                              annFile='./data/coco/annotations/instances_val2017.json',
-                                              transform=data_transforms['val']),
-                    'train': MyCocoSegmentation(root='./data/coco/train2017',
-                                                annFile='./data/coco/annotations/instances_train2017.json',
-                                                transform=data_transforms['train'])}
-        label_embedding_file = "./data/coco/coco_label_embedding.pth"
-        label_embedding = torch.load(label_embedding_file)
-        label_index = list(label_embedding['itos'].keys())
-        train_label_index = None
-        word_embeddings_vec = word_embedding.vectors[label_index].T.cuda() # type: ignore
-    else:
-        raise NotImplementedError
-
-    # Set up dataloader
-    dataloaders = {x: torch.utils.data.DataLoader(datasets[x], batch_size=args.batch_size, # type: ignore
-                                                  shuffle=True, num_workers=args.num_workers)
-                   for x in ['train', 'val']}
-
-    # Set up loss function
     loss_fn = CSMRLoss(margin=args.margin)
-    print("Model setup...")
 
-    # Train and validate
-    best_valid_loss = 99999999.
-    train_accuracies = []
-    valid_accuracies = []
-    with open(os.path.join(args.save_dir, 'valid.txt'), 'w') as f:
+    # Set up dataset.
+    if args.refer == "vg":
+        # Set up Visual Genome dataset.
+        dataset = VisualGenome(root="./data/vg",
+                               transform=data_transforms["val"])
+        train_size = int(len(dataset) * args.train_rate)
+        test_size = len(dataset) - train_size
+        datasets = {}
+        datasets["train"], datasets["val"] = \
+            random_split(dataset, [train_size, test_size])
+
+        label_indices = [word_embedding.stoi[label]
+                         for label in dataset.labels]
+        word_embeddings_vec = word_embedding.vectors[label_indices].T.cuda()
+        train_label_indices = np.random.choice(
+            range(len(label_indices)),
+            int(len(label_indices) * args.anno_rate)
+        )
+    elif args.refer == "coco":
+        # Set up COCO dataset.
+        datasets = {
+            "train": MyCocoSegmentation(
+                root="./data/coco/train2017",
+                annFile="./data/coco/annotations/instances_train2017.json",
+                transform=data_transforms["train"]
+            ),
+            "val": MyCocoSegmentation(
+                root="./data/coco/val2017",
+                annFile="./data/coco/annotations/instances_val2017.json",
+                transform=data_transforms["val"]
+            )
+        }
+
+        label_indices = list(datasets["train"].label_embedding["itos"].keys())
+        word_embeddings_vec = word_embedding.vectors[label_indices].T.cuda()
+        train_label_indices = None
+    else:
+        raise NotImplementedError(f"Reference dataset '{args.refer}' "
+                                  "not implemented.")
+
+    # Set up dataloader.
+    dataloaders = {
+        dataset_type: DataLoader(dataset, batch_size=args.batch_size,
+                                 shuffle=True, num_workers=args.num_workers)
+        for dataset_type, dataset in datasets.items()
+    }
+
+    # Print confirmation message.
+    print()
+    print("[ Model was set up correctly! ]".center(79, "-"))
+    print()
+
+    # ------------------------------ TRAINING ------------------------------- #
+
+    loss_valid_best = 99999999
+    accs_train = []
+    accs_valid = []
+
+    with open(os.path.join(args.save_dir, "valid.txt"), "w") as f:
         for epoch in range(args.epochs):
-            
-            # train and validate
-            train_loss, train_acc = train_one_epoch(epoch, model, loss_fn, optimizer, dataloaders['train'],
-                                                    word_embeddings_vec, args.save_dir, train_label_index)
-            ave_valid_loss, valid_acc = validate(model, loss_fn, dataloaders['val'],
-                                                 word_embeddings_vec, train_label_index)
+            print()
+            print(f"[ Epoch {epoch} starting ]".center(79, "-"))
 
-            # Setup wandb logging
+            # Train and validate.
+            loss_train, acc_train = train_one_epoch(args,
+                                                    model,
+                                                    loss_fn,
+                                                    dataloaders["train"],
+                                                    word_embeddings_vec,
+                                                    epoch,
+                                                    optimizer,
+                                                    train_label_indices)
+            loss_valid, acc_valid = validate(args,
+                                             model,
+                                             loss_fn,
+                                             dataloaders["val"],
+                                             word_embeddings_vec,
+                                             train_label_indices)
+
+            # Setup wandb logging.
             if args.wandb:
-                wandb.log({'Epoch': epoch})
-                wandb.log({'Epoch': epoch, 'Epoch_Ave_Train_Loss': train_loss})
-                wandb.log({'Epoch': epoch, 'Epoch_Ave_Train_Acc': train_acc})
-                wandb.log({'Epoch': epoch, 'Epoch_Ave_Valid_Loss': ave_valid_loss})
-                wandb.log({'Epoch': epoch, 'Epoch_Ave_Valid_Acc': valid_acc})
-                wandb.log({'Epoch': epoch, 'LR': optimizer.param_groups[0]['lr']}) # type: ignore
+                wandb.log({"Epoch": epoch})
+                wandb.log({"Epoch": epoch, "Epoch_Ave_Train_Loss": loss_train})
+                wandb.log({"Epoch": epoch, "Epoch_Ave_Train_Acc": acc_train})
+                wandb.log({"Epoch": epoch, "Epoch_Ave_Valid_Loss": loss_valid})
+                wandb.log({"Epoch": epoch, "Epoch_Ave_Valid_Acc": acc_valid})
+                wandb.log({"Epoch": epoch,
+                           "LR": optimizer.param_groups[0]["lr"]})
 
-            # save train and validation accuracy
-            train_accuracies.append(train_acc)
-            valid_accuracies.append(valid_acc)
-            scheduler.step(ave_valid_loss)
-            f.write('epoch: %d\n' % epoch)
-            f.write('train loss: %f\n' % train_loss)
-            f.write('train accuracy: %f\n' % train_acc)
-            f.write('validation loss: %f\n' % ave_valid_loss)
-            f.write('validation accuracy: %f\n' % valid_acc)
+            # Save train and validation accuracy.
+            accs_train.append(acc_train)
+            accs_valid.append(acc_valid)
+            scheduler.step(loss_valid)
+            f.write("epoch: %d\n" % epoch)
+            f.write("train loss: %f\n" % loss_train)
+            f.write("train accuracy: %f\n" % acc_train)
+            f.write("valid loss: %f\n" % loss_valid)
+            f.write("valid accuracy: %f\n" % acc_valid)
 
-            # save checkpoint if validation loss is the best so far
-            if ave_valid_loss < best_valid_loss:
-                best_valid_loss = ave_valid_loss
-                print('==> new checkpoint saved')
-                f.write('==> new checkpoint saved\n')
-                torch.save({
-                    'epoch': epoch,
-                    'state_dict': model.state_dict(),
-                    'optimizer': optimizer.state_dict()
-                }, os.path.join(args.save_dir, 'ckpt_best.pth.tar'))
+            # Save checkpoint if validation loss is the lowest loss so far.
+            if loss_valid < loss_valid_best:
+                loss_valid_best = loss_valid
+                print("==> new checkpoint saved")
+                f.write("==> new checkpoint saved\n")
+                torch.save(
+                    {
+                        "epoch": epoch,
+                        "state_dict": model.state_dict(),
+                        "optimizer": optimizer.state_dict()
+                    },
+                    os.path.join(args.save_dir, "ckpt_best.pth.tar")
+                )
                 plt.figure()
-                plt.plot(train_loss, '-o', label='train')
-                plt.plot(ave_valid_loss, '-o', label='valid')
-                plt.xlabel('Epoch')
-                plt.ylabel('Loss (')
-                plt.legend(loc='upper right')
-                plt.savefig(os.path.join(args.save_dir, 'losses.png'))
+                plt.plot(loss_train, "-o", label="train")
+                plt.plot(loss_valid, "-o", label="valid")
+                plt.xlabel("Epoch")
+                plt.ylabel("Loss (")
+                plt.legend(loc="upper right")
+                plt.savefig(os.path.join(args.save_dir, "losses.png"))
                 plt.close()
 
-    # Save wandb summary
-    wandb.run.summary["best_validation_loss"] = best_valid_loss # type: ignore
+    # Save wandb summary.
+    wandb.run.summary["best_validation_loss"] = loss_valid_best
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--batch-size', type=int, default=512)
-    parser.add_argument('--num-classes', type=int, default=2)
-    parser.add_argument('--num-workers', type=int, default=16)
-    parser.add_argument('--word-embedding-dim', type=int, default=300)
-    parser.add_argument('--save-dir', type=str, default='./outputs')
-    parser.add_argument('--save-every', type=int, default=1000)
-    parser.add_argument('--epochs', type=int, default=10)
-    parser.add_argument('--random', type=bool, default=False, help='Use randomly initialized models instead of pretrained feature extractors')
-    parser.add_argument('--wandb', type=bool, default=True, help='Use wandb for logging')
-    parser.add_argument('--layer', type=str, default='layer4', help='target layer')
-    parser.add_argument('--classifier_name', type=str, default='fc', help='name of classifier layer')
-    parser.add_argument('--model', type=str, default='resnet50', help='target network')
-    parser.add_argument('--refer', type=str, default='coco', choices=('vg', 'coco'), help='reference dataset')
-    parser.add_argument('--pretrain', type=str, default=None, help='path to the pretrained model')
-    parser.add_argument('--name', type=str, default='debug', help='experiment name')
-    parser.add_argument('--anno-rate', type=float, default=0.1, help='fraction of concepts used for supervision')
-    parser.add_argument('--margin', type=float, default=1., help='hyperparameter for margin ranking loss')
+    parser.add_argument("--seed", type=int, default=42,
+                        help="Random seed to use")
+    parser.add_argument("--batch-size", type=int, default=512,
+                        help="Batch size for training the model")
+    parser.add_argument("--num-classes", type=int, default=2,
+                        help="Number of classes to use")
+    parser.add_argument("--num-workers", type=int, default=16,
+                        help="Number of subprocesses to use for data loading.")
+    parser.add_argument("--word-embedding-dim", type=int, default=300,
+                        help="GloVe word embedding dimension to use")
+    parser.add_argument("--save-dir", type=str, default="./outputs",
+                        help="Where to save model checkpoints")
+    parser.add_argument("--save-every", type=int, default=1000,
+                        help="How often to save a model checkpoint")
+    parser.add_argument("--epochs", type=int, default=10,
+                        help="Number of epochs")
+    parser.add_argument("--random", action="store_true",
+                        help="Use randomly initialized models instead of "
+                        "pretrained feature extractors")
+    parser.add_argument("--wandb", action="store_true",
+                        help="Use wandb for logging")
+    parser.add_argument("--layer", type=str, default="layer4",
+                        help="Target layer to use")
+    parser.add_argument("--classifier-name", type=str, default="fc",
+                        help="Name of classifier layer")
+    parser.add_argument("--model", type=str, default="resnet50",
+                        help="Target network")
+    parser.add_argument("--refer", type=str, default="coco",
+                        choices=("vg", "coco"),
+                        help="Reference dataset")
+    parser.add_argument("--pretrain", type=str, default=None,
+                        help="Path to the pretrained model")
+    parser.add_argument("--name", type=str, default="debug",
+                        help="Experiment name")
+    parser.add_argument("--anno-rate", type=float, default=0.1,
+                        help="Fraction of concepts used for supervision")
+    parser.add_argument("--train-rate", type=float, default=0.9,
+                        help="Fraction of data used for training")
+    parser.add_argument("--margin", type=float, default=1.0,
+                        help="Hyperparameter for margin ranking loss")
+
     args = parser.parse_args()
     print(args)
 

@@ -5,9 +5,9 @@
 **/data/vg/VG_100k/**
 **/data/vg/VG_100K_2/**
 **/data/vg/visual_genome_python_driver/**
-**/data/**.pkl
-**/data/**.pth
-**/data/**.json
+**.pkl
+**.pth
+**.json
 
 # Ignore cache files.
 **/__pycache__/**
