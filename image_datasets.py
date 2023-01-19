@@ -112,9 +112,12 @@ class VisualGenome(Dataset):
 
         # Get the image that contains the instance and apply augmentations.
         path = f"VG_100K/{self.samples[sample_id]['image_id']}.jpg"
-        img = Image.open(os.path.join(self.root, path)).convert("RGB")
+        ori_img = Image.open(os.path.join(self.root, path)).convert("RGB")
+        # transform image
         if self.transform is not None:
-            img = self.transform(img)
+            img = self.transform(ori_img)
+        else:
+            img = ori_img
 
         # Create a one-hot vector for the target category.
         target = torch.zeros((len(self.labels),))
@@ -122,7 +125,7 @@ class VisualGenome(Dataset):
 
         # Create the instance mask.
         bbox = self.samples[sample_id]["objects"][label][bbox_id]
-        mask = torch.zeros(img.size)
+        mask = torch.zeros(ori_img.size)
         mask[bbox["y"]:bbox["y"] + bbox["h"],
              bbox["x"]:bbox["x"] + bbox["w"]] = 1
         mask = self.mask_transform(mask)
