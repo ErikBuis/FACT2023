@@ -14,14 +14,14 @@ def setup_explainer(args: argparse.Namespace,
     This function is used to set up the explainer model.
 
     Args:
-        settings (argparse.Namespace): The settings of the experiment.
+        args (argparse.Namespace): The command line arguments.
         hook_fn (Optional[Callable], optional): The hook function to be
             registered to the explainer model. Defaults to None.
         random_feature (bool, optional): Whether to use randomly initialized
             models instead of pretrained feature extractors. Defaults to False.
 
     Returns:
-        nn.Module: The explainer model.
+        nn.Module: Feat() + Exp() model.
     """
     if random_feature:
         # Load the model without pretrained weights.
@@ -73,16 +73,6 @@ def setup_explainer(args: argparse.Namespace,
     else:
         raise NotImplementedError(f"Model '{args.model}' is not supported.")
 
-    # Load the pretrained weights of the explainer model if specified.
-    # This code was previously under the first if-statement
-    # (i.e. "if random_feature:").
-    if args.pretrain:
-        checkpoint = torch.load(args.pretrain)
-        if type(checkpoint).__name__ == "OrderedDict" \
-                or type(checkpoint).__name__ == "dict":
-            state_dict = checkpoint["state_dict"]
-            model.load_state_dict(state_dict)
-
     # Register the hook function to the explainer model.
     # The hook function will be called every time  the forward pass through the
     # target layer has been performed. It is only intended for debugging/
@@ -95,3 +85,48 @@ def setup_explainer(args: argparse.Namespace,
     model.cuda()
 
     return model
+
+
+def forward_Feat(args: argparse.Namespace, model: nn.Module,
+                 imgs: torch.Tensor) -> torch.Tensor:
+    """
+    Perform a forward pass through the feature extractor Feat().
+
+    Args:
+        args (argparse.Namespace): The command line arguments.
+        model (nn.Module): Feat() + Exp() model.
+        imgs (torch.Tensor): Batch of input images.
+            Shape: [batch_size, 3, 224, 224].
+
+    Returns:
+        torch.Tensor: Batch of filter activations.
+            Shape: [batch_size, amount_filters, 7, 7].
+    """
+    for name, module in model._modules.items():
+        imgs = module(imgs)
+        if name == args.layer:
+            return imgs
+
+
+def forward_Exp(args: argparse.Namespace, model: nn.Module,
+                acts: torch.Tensor) -> torch.Tensor:
+    """
+    Perform a forward pass through the feature explainer Exp().
+
+    Args:
+        args (argparse.Namespace): The command line arguments.
+        model (nn.Module): Feat() + Exp() model.
+        acts (torch.Tensor): Batch of filter activations.
+            Shape: [batch_size, amount_filters, 7, 7].
+
+    Returns:
+        torch.Tensor: Batch of word embeddings.
+            Shape: [batch_size, word_embedding_dim].
+    """
+    target_layer_seen = False
+    for name, module in model._modules.items():
+        if target_layer_seen:
+            acts = module(acts)
+        elif name == args.layer:
+            target_layer_seen = True
+    return acts

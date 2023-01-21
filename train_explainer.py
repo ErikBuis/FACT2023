@@ -8,8 +8,10 @@ import numpy as np
 import torch
 import torch.nn as nn
 import wandb
-from image_datasets import MyCocoSegmentation, VisualGenome, data_transforms
-from model_loader import setup_explainer
+from image_datasets import (CocoInstances, VisualGenomeInstances,
+                            data_transforms)
+from model_loader import forward_Exp, forward_Feat, setup_explainer
+from torch.linalg import vector_norm
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
 from torch.utils.data.dataset import random_split
@@ -45,15 +47,16 @@ def train_one_epoch(args: argparse.Namespace,
 
     Args:
         args (argparse.Namespace): The command line arguments.
-        model (nn.Module): The model to train.
+        model (nn.Module): Feat() + Exp() model.
         loss_fn (nn.Module): The loss function to use.
-        train_loader (DataLoader): The training set data loader.
+        train_loader (DataLoader): The training set dataloader.
         embeddings (torch.Tensor): The ground-truth category embeddings.
-            Shape: [embedding_dim, num_categories]
+            Shape: [word_embedding_dim, num_categories].
         epoch (int): The current epoch.
         optimizer (torch.optim.Optimizer): The optimizer to use.
         train_label_indices (Optional[np.ndarray], optional): The indices of
             the labels to train on. Defaults to None.
+            Shape: [num_train_labels].
         ks (list[int], optional): List of k-values. Each k represents the
             number of top category predictions to consider for accuracy
             calculation. Defaults to [1, 5, 10, 20].
@@ -80,25 +83,21 @@ def train_one_epoch(args: argparse.Namespace,
         targets, masks = targets.squeeze(0).cuda(), masks.squeeze(0).cuda()
 
         # Forward pass.
-        # We can't use `model(imgs)` directly because we need to apply the
-        # mask to an intermediate value of the model.
-        preds = imgs.clone()
-        for name, module in model._modules.items():
-            if name == args.classifier_name:
-                preds = torch.flatten(preds, 1)
-            preds = module(preds)
-            if name == args.layer:
-                if torch.sum(masks) > 0:
-                    preds = preds * masks
+        # TODO is torch.flatten(preds, 1) necessary before passing the
+        # TODO activations into the explainer Exp()?
+        acts = forward_Feat(args, model, imgs)
+        if torch.sum(masks) > 0:
+            acts *= masks
+        preds = forward_Exp(args, model, acts)
 
-        # Compute the cosine similarity between each prediction and each
-        # ground-truth category embedding. Then sorting the results in
-        # descending order, so that the top `k` indices represent the
-        # categories that are most similar to the model's prediction.
+        # Compute the cosine similarity between each prediction and
+        # each ground-truth category embedding. Then sort the results
+        # in descending order, so that the top `k` indices represent
+        # the categories that are most similar to the model's prediction.
         cat_preds_per_sample = torch.argsort(
-            (preds @ embeddings) /
-            (torch.sqrt(torch.sum(preds**2, dim=1, keepdim=True)) @
-             torch.sqrt(torch.sum(embeddings**2, dim=0, keepdim=True))),
+            (preds @ embeddings)
+            / (vector_norm(preds, dim=1, keepdim=True) @
+               vector_norm(embeddings, dim=0, keepdim=True)),
             dim=1,
             descending=True
         )[:, :max(ks)]
@@ -170,13 +169,14 @@ def validate(args: argparse.Namespace,
 
     Args:
         args (argparse.Namespace): The command line arguments.
-        model (nn.Module): The model to train.
+        model (nn.Module): Feat() + Exp() model.
         loss_fn (nn.Module): The loss function to use.
         valid_loader (DataLoader): The validation set data loader.
         embeddings (torch.Tensor): The ground-truth category embeddings.
-            Shape: [embedding_dim, num_categories]
+            Shape: [word_embedding_dim, num_categories].
         train_label_indices (Optional[np.ndarray], optional): The indices of
             the labels to train on. Defaults to None.
+            Shape: [num_train_labels].
         ks (list[int], optional): List of k-values. Each k represents the
             number of top category predictions to consider for accuracy
             calculation. Defaults to [1, 5, 10, 20].
@@ -202,25 +202,21 @@ def validate(args: argparse.Namespace,
             targets, masks = targets.squeeze(0).cuda(), masks.squeeze(0).cuda()
 
             # Forward pass.
-            # We can't use `model(imgs)` directly because we need to apply the
-            # mask to an intermediate value of the model.
-            preds = imgs.clone()
-            for name, module in model._modules.items():
-                if name == args.classifier_name:
-                    preds = torch.flatten(preds, 1)
-                preds = module(preds)
-                if name == args.layer:
-                    if torch.sum(masks) > 0:
-                        preds = preds * masks
+            # TODO is torch.flatten(preds, 1) necessary before passing the
+            # TODO activations into the explainer Exp()?
+            acts = forward_Feat(args, model, imgs)
+            if torch.sum(masks) > 0:
+                acts *= masks
+            preds = forward_Exp(args, model, acts)
 
-            # Compute the cosine similarity between each prediction and each
-            # ground-truth category embedding. Then sorting the results in
-            # descending order, so that the top `k` indices represent the
-            # categories that are most similar to the model's prediction.
+            # Compute the cosine similarity between each prediction and
+            # each ground-truth category embedding. Then sort the results
+            # in descending order, so that the top `k` indices represent
+            # the categories that are most similar to the model's prediction.
             cat_preds_per_sample = torch.argsort(
-                (preds @ embeddings) /
-                (torch.sqrt(torch.sum(preds**2, dim=1, keepdim=True)) @
-                 torch.sqrt(torch.sum(embeddings**2, dim=0, keepdim=True))),
+                (preds @ embeddings)
+                / (vector_norm(preds, dim=1, keepdim=True) @
+                   vector_norm(embeddings, dim=0, keepdim=True)),
                 dim=1,
                 descending=True
             )[:, :max(ks)]
@@ -276,7 +272,7 @@ def main(args: argparse.Namespace):
     if not os.path.exists(args.save_dir):
         os.makedirs(args.save_dir)
 
-    # Set up Wandb logging.
+    # Set up wandb logging.
     if args.wandb:
         wandb_id_file_path = pathlib.Path(os.path.join(args.save_dir,
                                                        "runid.txt"))
@@ -286,55 +282,51 @@ def main(args: argparse.Namespace):
         wandb_id_file_path.write_text(str(run.id))
 
     # Set up GloVe word embeddings.
-    word_embedding = GloVe(name="6B", dim=args.word_embedding_dim)
+    glove = GloVe(name="6B", dim=args.word_embedding_dim)
     torch.cuda.empty_cache()
-
-    # Set up model, optimizer, scheduler and loss function.
-    model = setup_explainer(args, random_feature=args.random)
-    model = model.cuda()
-    optimizer = torch.optim.Adam(model.fc.parameters(), lr=1e-4)
-    scheduler = ReduceLROnPlateau(optimizer, verbose=True)
-    loss_fn = CSMRLoss(margin=args.margin)
 
     # Set up dataset.
     if args.refer == "vg":
         # Set up Visual Genome dataset.
-        dataset = VisualGenome(root="./data/vg",
-                               transform=data_transforms["val"])
+        root = os.path.join(args.data_dir, "vg")
+        dataset = VisualGenomeInstances(
+            root=root,
+            transform=data_transforms["val"]
+        )
         train_size = int(len(dataset) * args.train_rate)
         test_size = len(dataset) - train_size
         datasets = {}
         datasets["train"], datasets["val"] = \
             random_split(dataset, [train_size, test_size])
-
-        label_indices = [word_embedding.stoi[label]
+        label_indices = [glove.stoi[label]
                          for label in dataset.labels]
-        word_embeddings_vec = word_embedding.vectors[label_indices].T.cuda()
+        embeddings = glove.vectors[label_indices].T.cuda()
         train_label_indices = np.random.choice(
             range(len(label_indices)),
             int(len(label_indices) * args.anno_rate)
         )
     elif args.refer == "coco":
         # Set up COCO dataset.
-        datasets = {
-            "train": MyCocoSegmentation(
-                root="./data/coco/train2017",
-                annFile="./data/coco/annotations/instances_train2017.json",
-                transform=data_transforms["train"]
-            ),
-            "val": MyCocoSegmentation(
-                root="./data/coco/val2017",
-                annFile="./data/coco/annotations/instances_val2017.json",
-                transform=data_transforms["val"]
-            )
-        }
-
-        label_indices = list(datasets["train"].label_embedding["itos"].keys())
-        word_embeddings_vec = word_embedding.vectors[label_indices].T.cuda()
+        root = os.path.join(args.data_dir, "coco")
+        datasets = {}
+        datasets["train"] = CocoInstances(
+            root=os.path.join(root, "train2017"),
+            annFile=os.path.join(root, "annotations/instances_train2017.json"),
+            cat_mappings_file=os.path.join(root, "coco_label_embedding.pth"),
+            transform=data_transforms["train"]
+        )
+        datasets["val"] = CocoInstances(
+            root=os.path.join(root, "val2017"),
+            annFile=os.path.join(root, "annotations/instances_val2017.json"),
+            cat_mappings_file=os.path.join(root, "coco_label_embedding.pth"),
+            transform=data_transforms["val"]
+        )
+        label_indices = list(datasets["train"].cat_mappings["itos"].keys())
+        embeddings = glove.vectors[label_indices].T.cuda()
         train_label_indices = None
     else:
-        raise NotImplementedError(f"Reference dataset '{args.refer}' "
-                                  "not implemented.")
+        raise NotImplementedError(f"Reference dataset '{args.refer}' is not "
+                                  "implemented.")
 
     # Set up dataloader.
     dataloaders = {
@@ -343,9 +335,26 @@ def main(args: argparse.Namespace):
         for dataset_type, dataset in datasets.items()
     }
 
+    # Set up model.
+    model = setup_explainer(args, random_feature=args.random)
+    if args.model_path is None:
+        args.model_path = os.path.join(args.save_dir, "ckpt_best.pth.tar")
+    if os.path.exists(args.model_path):
+        print(f"Loading model from '{args.model_path}'...")
+        model.load_state_dict(torch.load(args.max_path)["state_dict"])
+    else:
+        print(f"No model found at '{args.model_path}'. "
+              "Training from scratch...")
+    model = model.cuda()
+
+    # Set up optimizer, scheduler and loss function.
+    optimizer = torch.optim.Adam(model.fc.parameters(), lr=1e-4)
+    scheduler = ReduceLROnPlateau(optimizer, verbose=True)
+    loss_fn = CSMRLoss(margin=args.margin)
+
     # Print confirmation message.
     print()
-    print("[ Model was set up correctly! ]".center(79, "-"))
+    print("[ Model was set up successfully! ]".center(79, "-"))
     print()
 
     # ------------------------------ TRAINING ------------------------------- #
@@ -364,7 +373,7 @@ def main(args: argparse.Namespace):
                                                     model,
                                                     loss_fn,
                                                     dataloaders["train"],
-                                                    word_embeddings_vec,
+                                                    embeddings,
                                                     epoch,
                                                     optimizer,
                                                     train_label_indices)
@@ -372,7 +381,7 @@ def main(args: argparse.Namespace):
                                              model,
                                              loss_fn,
                                              dataloaders["val"],
-                                             word_embeddings_vec,
+                                             embeddings,
                                              train_label_indices)
 
             # Setup wandb logging.
@@ -423,46 +432,46 @@ def main(args: argparse.Namespace):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--seed", type=int, default=42,
-                        help="Random seed to use")
+    parser.add_argument("--anno-rate", type=float, default=0.1,
+                        help="Fraction of concepts used for supervision")
     parser.add_argument("--batch-size", type=int, default=512,
-                        help="Batch size for training the model")
-    parser.add_argument("--num-classes", type=int, default=2,
-                        help="Number of classes to use")
-    parser.add_argument("--num-workers", type=int, default=16,
-                        help="Number of subprocesses to use for data loading.")
-    parser.add_argument("--word-embedding-dim", type=int, default=300,
-                        help="GloVe word embedding dimension to use")
-    parser.add_argument("--save-dir", type=str, default="./outputs",
-                        help="Where to save model checkpoints")
-    parser.add_argument("--save-every", type=int, default=1000,
-                        help="How often to save a model checkpoint")
-    parser.add_argument("--epochs", type=int, default=10,
-                        help="Number of epochs")
-    parser.add_argument("--random", action="store_true",
-                        help="Use randomly initialized models instead of "
-                        "pretrained feature extractors")
-    parser.add_argument("--wandb", action="store_true",
-                        help="Use wandb for logging")
-    parser.add_argument("--layer", type=str, default="layer4",
-                        help="Target layer to use")
+                        help="Batch size for data loading")
     parser.add_argument("--classifier-name", type=str, default="fc",
                         help="Name of classifier layer")
+    parser.add_argument("--data-dir", type=str, default="./data",
+                        help="Path to the dataset directory")
+    parser.add_argument("--epochs", type=int, default=10,
+                        help="Number of epochs")
+    parser.add_argument("--layer", type=str, default="layer4",
+                        help="Target layer to explain")
+    parser.add_argument("--margin", type=float, default=1.0,
+                        help="Hyperparameter for margin ranking loss")
     parser.add_argument("--model", type=str, default="resnet50",
                         help="Target network")
+    parser.add_argument("--model-path", type=Optional[str], default=None,
+                        help="Path to trained explainer model")
+    parser.add_argument("--name", type=str, default="debug",
+                        help="Experiment name")
+    parser.add_argument("--num-workers", type=int, default=16,
+                        help="Number of subprocesses to use for data loading")
+    parser.add_argument("--random", action="store_true",
+                        help="Use a randomly initialized target model instead "
+                        "of torchvision pretrained weights")
     parser.add_argument("--refer", type=str, default="coco",
                         choices=("vg", "coco"),
                         help="Reference dataset")
-    parser.add_argument("--pretrain", type=str, default=None,
-                        help="Path to the pretrained model")
-    parser.add_argument("--name", type=str, default="debug",
-                        help="Experiment name")
-    parser.add_argument("--anno-rate", type=float, default=0.1,
-                        help="Fraction of concepts used for supervision")
+    parser.add_argument("--save-dir", type=str, default="./outputs",
+                        help="Path to model checkpoints")
+    parser.add_argument("--save-every", type=int, default=1000,
+                        help="How often to save a model checkpoint")
+    parser.add_argument("--seed", type=int, default=42,
+                        help="Random seed to use")
     parser.add_argument("--train-rate", type=float, default=0.9,
                         help="Fraction of data used for training")
-    parser.add_argument("--margin", type=float, default=1.0,
-                        help="Hyperparameter for margin ranking loss")
+    parser.add_argument("--wandb", action="store_true",
+                        help="Use wandb for logging")
+    parser.add_argument("--word-embedding-dim", type=int, default=300,
+                        help="GloVe word embedding dimension to use")
 
     args = parser.parse_args()
     print(args)
