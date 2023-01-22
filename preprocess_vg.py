@@ -1,7 +1,6 @@
 """Script to preprocess the Visual Genome dataset as described in the paper."""
 
 import json
-import logging
 import os
 from collections import defaultdict
 
@@ -10,21 +9,22 @@ from tqdm import tqdm
 
 def _load_samples(root: str) -> list:
     """Load the object data from the json file."""
-    logging.info("Loading object data...")
+    print("Loading object data...")
     path = os.path.join(root, "vg_objects.json")
     with open(path) as f:
         samples = json.load(f)
-    logging.info("Loading complete.")
+    print("Loading complete.")
+    
     return samples
 
 
 def _save_samples(root: str, samples: list[dict[str, list[dict[str, int]]]]):
     """Save the preprocessed object data to the json file."""
-    logging.info("Saving object data...")
+    print("Saving object data...")
     path = os.path.join(root, "vg_objects_preprocessed.json")
     with open(path, "w") as f:
         json.dump(samples, f)
-    logging.info("Saving complete.")
+    print("Saving complete.")
 
 
 def preprocess_vg(samples: list, min_count: int = 100) \
@@ -50,7 +50,7 @@ def preprocess_vg(samples: list, min_count: int = 100) \
     """
     catagory_counts = defaultdict(int)
     preprocessed_samples = []
-    logging.info("Preprocessing data...")
+    print("Preprocessing data...")
     for image in tqdm(samples):
         # Remove images that have no box-able annotations.
         if len(image["objects"]) == 0:
@@ -74,19 +74,19 @@ def preprocess_vg(samples: list, min_count: int = 100) \
                                      "objects": result})
 
     # Delete categories that appear in less than 100 training images.
-    logging.info(f"Removing categories that appear in less than {min_count} "
+    print(f"Removing categories that appear in less than {min_count} "
                  "training images...")
     objects_to_remove = [category
                          for category, count in catagory_counts.items()
                          if count < min_count]
-    logging.info(f"Removing {len(objects_to_remove)} categories. "
+    print(f"Removing {len(objects_to_remove)} categories. "
                  f"{len(catagory_counts) - len(objects_to_remove)} remain.")
     for image in tqdm(preprocessed_samples):
         for category in objects_to_remove:
             image["objects"].pop(category, None)
     preprocessed_samples = [image for image in preprocessed_samples
                             if len(image["objects"]) > 0]
-    logging.info("Preprocessing complete. "
+    print("Preprocessing complete. "
                  f"{len(preprocessed_samples)} images remain.")
 
     return preprocessed_samples
@@ -100,5 +100,4 @@ def main():
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
     main()
