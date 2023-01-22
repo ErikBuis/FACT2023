@@ -353,7 +353,7 @@ def main(args: argparse.Namespace):
         args.model_path = os.path.join(args.save_dir, "ckpt_best.pth.tar")
     if os.path.exists(args.model_path):
         print(f"Loading model from '{args.model_path}'...")
-        model.load_state_dict(torch.load(args.max_path)["state_dict"])
+        model.load_state_dict(torch.load(args.model_path)["state_dict"])
     else:
         raise FileNotFoundError(f"No model found at '{args.model_path}'.")
     model = model.cuda()
@@ -391,7 +391,7 @@ if __name__ == "__main__":
                         help="Method used to explain the target filter")
     parser.add_argument("--model", type=str, default="resnet50",
                         help="Target network")
-    parser.add_argument("--model-path", type=Optional[str], default=None,
+    parser.add_argument("--model-path", type=str, default=None,
                         help="Path to trained explainer model")
     parser.add_argument("--name", type=str, default="debug",
                         help="Experiment name")
