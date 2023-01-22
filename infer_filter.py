@@ -70,7 +70,7 @@ def find_images_max_activations(args: argparse.Namespace, model: nn.Module,
 
     # We only need the image indices, so we will extract those here.
     max_activations = torch.Tensor([[tup[1] for tup in max_act_imgs]
-                         for max_act_imgs in max_acts_sorted])
+                         for max_act_imgs in max_acts_sorted], dtype=torch.long)
     
     # Save the max activations to a file.
     torch.save(max_activations, os.path.join(args.save_dir, "max_activations.pt"))
@@ -225,7 +225,7 @@ def inference(args: argparse.Namespace,
                 max_acts_u = max_acts_u[~imgs_no_activation]
 
             # Explain the filters with the batch of images.
-            preds = explain(args, model, imgs, acts, acts_u, acts_u_resized)
+            preds = explain(args.method, model, imgs, acts, acts_u, acts_u_resized)
 
             # Compute the cosine similarity between each prediction and
             # each ground-truth word embedding. Then sort the results
