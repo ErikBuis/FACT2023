@@ -143,8 +143,11 @@ class VisualGenomeImages(_VisualGenomeAbstract):
         for label, bboxes in self.samples[sample_id]["objects"].items():
             for bbox in bboxes:
                 # Create a one-hot target vector for each instance.
+                #TODO: Does it make sense to add zero tensor's to target list if label not in the label list?
+                # or is it better to skip these images.
                 target = torch.zeros((len(self.labels),))
-                target[self.labels[label]] = 1
+                if label in self.labels:
+                    target[self.labels[label]] = 1
                 targets.append(target)
 
                 # Load the segmentation mask for each instance.
