@@ -39,7 +39,7 @@ def find_images_max_activations(args: argparse.Namespace, model: nn.Module,
     path = os.path.join(args.save_dir, f"max_activations/max_activations_{len(args.u)}_{args.p}.pt")
     if os.path.exists(path):
         print(f"Found precomputed max activations at {path}, loading..")
-        return torch.load(args.max_activations_path)
+        return torch.load(path)
 
     # For each target filter, save a sorted list of (-max_act, img_idx) tuples.
     # max_acts_sorted[u] = [(-max_act, img_idx), ...]
