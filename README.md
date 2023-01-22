@@ -14,7 +14,7 @@
 Run the following script to download and setup the VG data.
 
 ```commandline
-bash data/vg.sh
+bash vg.sh
 ```
 
 ### [GloVe](https://nlp.stanford.edu/projects/glove/)
