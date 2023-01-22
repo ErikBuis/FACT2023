@@ -35,11 +35,16 @@ def find_images_max_activations(args: argparse.Namespace, model: nn.Module,
             images that cause the filter to output the highest activation.
             Shape: [amount_target_filters, p].
     """
+    if args.max_activations_path:
+        print(f"Loading max activations from {args.max_activations_path}...")
+        # Load the max activations from a file.
+        return torch.load(args.max_activations_path)
+
     # For each target filter, save a sorted list of (-max_act, img_idx) tuples.
     # max_acts_sorted[u] = [(-max_act, img_idx), ...]
     max_acts_sorted = [[] for _ in range(len(args.u))]
 
-    for batch_idx, (imgs, _, _) in tqdm(enumerate(dataloader)):
+    for batch_idx, (imgs, _, _) in enumerate(tqdm(dataloader)):
         # Move batch data to GPU.
         imgs = imgs.cuda().detach()
 
@@ -64,8 +69,13 @@ def find_images_max_activations(args: argparse.Namespace, model: nn.Module,
                         max_acts_filter.pop()
 
     # We only need the image indices, so we will extract those here.
-    return torch.Tensor([[tup[1] for tup in max_act_imgs]
+    max_activations = torch.Tensor([[tup[1] for tup in max_act_imgs]
                          for max_act_imgs in max_acts_sorted])
+    
+    # Save the max activations to a file.
+    torch.save(max_activations, os.path.join(args.save_dir, "max_activations.pt"))
+    
+    return max_activations
 
 
 def explain(method: str, model: nn.Module, imgs: torch.Tensor,
@@ -393,6 +403,8 @@ if __name__ == "__main__":
                         help="Target network")
     parser.add_argument("--model-path", type=str, default=None,
                         help="Path to trained explainer model")
+    parser.add_argument("--max-activations-path", type=str, default=None,
+                        help="Path to precomputed max activations")
     parser.add_argument("--name", type=str, default="debug",
                         help="Experiment name")
     parser.add_argument("--num-heatmaps", type=int, default=5,
