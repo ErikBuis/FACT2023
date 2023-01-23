@@ -338,7 +338,7 @@ def main(args: argparse.Namespace):
         args.model_path = os.path.join(args.save_dir, "ckpt_best.pth.tar")
     if os.path.exists(args.model_path):
         print(f"Loading model from '{args.model_path}'...")
-        model.load_state_dict(torch.load(args.max_path)["state_dict"])
+        model.load_state_dict(torch.load(args.model_path)["state_dict"])
     else:
         print(f"No model found at '{args.model_path}'. "
               "Training from scratch...")
