@@ -98,6 +98,9 @@ def train_one_epoch(args: argparse.Namespace,
             loss.backward()
             optimizer.step()
 
+        # Update loss.
+        loss_train += loss.data.detach().item()
+
         # Compute the cosine similarity between each prediction and
         # each ground-truth category embedding. Then sort the results
         # in descending order, so that the top `k` indices represent
@@ -111,13 +114,10 @@ def train_one_epoch(args: argparse.Namespace,
         )[:, :max(ks)]
 
         # Calculate accuracy.
-        for i, cat_preds in enumerate(cat_preds_per_sample):
-            for k in ks:
-                correct_train[k] += targets[i, cat_preds[:k]] \
+        for k in ks:
+            for img_idx, cat_preds in enumerate(cat_preds_per_sample):
+                correct_train[k] += targets[img_idx, cat_preds[:k]] \
                     .any().detach().item()
-
-        # Update loss.
-        loss_train += loss.data.detach().item()
 
         # Print logging data.
         if batch_idx % 10 == 0 or batch_idx == amount_batches:
@@ -145,7 +145,7 @@ def train_one_epoch(args: argparse.Namespace,
         torch.cuda.empty_cache()
 
     # Calculate average loss and average accuracy per sample.
-    loss_train /= len(train_loader.dataset)
+    loss_train /= len(train_loader)
     accs_train = {k: correct_train[k] / len(train_loader.dataset) * 100
                   for k in ks}
     print()
@@ -201,12 +201,16 @@ def validate(args: argparse.Namespace,
             targets, masks = targets.squeeze(0).cuda(), masks.squeeze(0).cuda()
 
             # Forward pass.
-            # TODO is torch.flatten(preds, 1) necessary before passing the
-            # TODO activations into the explainer Exp()?
             acts = forward_Feat(args, model, imgs)
             if torch.sum(masks) > 0:
                 acts *= masks
             preds = forward_Exp(args, model, acts)
+
+            # Calculate loss.
+            loss = loss_fn(preds, targets, embeddings, train_label_indices)
+
+            # Update loss.
+            loss_valid += loss.data.detach().item()
 
             # Compute the cosine similarity between each prediction and
             # each ground-truth category embedding. Then sort the results
@@ -221,22 +225,16 @@ def validate(args: argparse.Namespace,
             )[:, :max(ks)]
 
             # Calculate accuracy.
-            for i, cat_preds in enumerate(cat_preds_per_sample):
-                for k in ks:
-                    correct_valid[k] += targets[i, cat_preds[:k]] \
+            for k in ks:
+                for img_idx, cat_preds in enumerate(cat_preds_per_sample):
+                    correct_valid[k] += targets[img_idx, cat_preds[:k]] \
                         .any().detach().item()
-
-            # Calculate loss.
-            loss = loss_fn(preds, targets, embeddings, train_label_indices)
-
-            # Update loss.
-            loss_valid += loss.data.detach().item()
 
         # Free memory.
         torch.cuda.empty_cache()
 
     # Calculate average loss and average accuracy per sample.
-    loss_valid /= len(valid_loader.dataset)
+    loss_valid /= len(valid_loader)
     accs_valid = {k: correct_valid[k] / len(valid_loader.dataset) * 100
                   for k in ks}
     print()
