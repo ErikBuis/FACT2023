@@ -2,12 +2,13 @@
 **/data/coco/annotations/**
 **/data/coco/train2017/**
 **/data/coco/val2017/**
-**/data/vg/VG_100k/**
+**/data/vg/VG_100K/**
 **/data/vg/VG_100K_2/**
 **/data/vg/visual_genome_python_driver/**
 **.pkl
 **.pth
 **.json
+**.zip
 
 # Ignore cache files.
 **/__pycache__/**
