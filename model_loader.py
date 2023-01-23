@@ -1,6 +1,5 @@
 import argparse
 import warnings
-from typing import Callable, Optional
 
 import torch
 import torch.nn as nn
@@ -8,15 +7,12 @@ import torchvision
 
 
 def setup_explainer(args: argparse.Namespace,
-                    hook_fn: Optional[Callable] = None,
                     random_feature: bool = False) -> nn.Module:
     """
     This function is used to set up the explainer model.
 
     Args:
         args (argparse.Namespace): The command line arguments.
-        hook_fn (Optional[Callable], optional): The hook function to be
-            registered to the explainer model. Defaults to None.
         random_feature (bool, optional): Whether to use randomly initialized
             models instead of pretrained feature extractors. Defaults to False.
 
@@ -41,10 +37,10 @@ def setup_explainer(args: argparse.Namespace,
         param.requires_grad = False
 
     # Get the index of the target layer (e.g. layer4).
-    target_index = list(model._modules).index(args.layer)
+    target_index = list(model._modules).index(args.layer_target)
 
     # Get the index of the classifier layer (e.g. fc).
-    classifier_index = list(model._modules).index(args.classifier_name)
+    classifier_index = list(model._modules).index(args.layer_classifier)
 
     # Replace the layers between the target and classifier layer with identity
     # layers. This is done to avoid unnecessary computation of these layers.
@@ -54,10 +50,10 @@ def setup_explainer(args: argparse.Namespace,
 
     if args.model.startswith("resnet"):
         # Get the feature dimension of the classifier layer.
-        feature_dim = model._modules[args.classifier_name].in_features
+        feature_dim = model._modules[args.layer_classifier].in_features
 
         # Replace the classifier layer with our Feature Explainer model.
-        model._modules[args.classifier_name] = nn.Sequential(
+        model._modules[args.layer_classifier] = nn.Sequential(
             nn.BatchNorm1d(feature_dim),
             nn.Dropout(0.1),
             nn.Linear(in_features=feature_dim,
@@ -72,13 +68,6 @@ def setup_explainer(args: argparse.Namespace,
         )
     else:
         raise NotImplementedError(f"Model '{args.model}' is not supported.")
-
-    # Register the hook function to the explainer model.
-    # The hook function will be called every time  the forward pass through the
-    # target layer has been performed. It is only intended for debugging/
-    # profiling purposes.
-    if hook_fn is not None:
-        model._modules.get(args.layer).register_forward_hook(hook_fn)
 
     # Move the feature extracter model (Feat) and the explainer model (Exp),
     # which are now combined into `model`, to the GPU.
@@ -104,7 +93,7 @@ def forward_Feat(args: argparse.Namespace, model: nn.Module,
     """
     for name, module in model._modules.items():
         imgs = module(imgs)
-        if name == args.layer:
+        if name == args.layer_target:
             return imgs
 
 
@@ -123,12 +112,12 @@ def forward_Exp(args: argparse.Namespace, model: nn.Module,
         torch.Tensor: Batch of word embeddings.
             Shape: [batch_size, word_embedding_dim].
     """
-    target_layer_seen = False
+    layer_target_seen = False
     for name, module in model._modules.items():
-        if target_layer_seen:
-            if name == args.classifier_name:
+        if layer_target_seen:
+            if name == args.layer_classifier:
                 acts = torch.flatten(acts, start_dim=1)
             acts = module(acts)
-        elif name == args.layer:
-            target_layer_seen = True
+        elif name == args.layer_target:
+            layer_target_seen = True
     return acts

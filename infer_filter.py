@@ -19,8 +19,9 @@ from torchtext.vocab import GloVe
 from tqdm import tqdm
 
 
-def find_images_max_activations(args: argparse.Namespace, model: nn.Module,
-                                dataloader: DataLoader) -> torch.Tensor:
+def find_max_activations(args: argparse.Namespace, model: nn.Module,
+                         dataloader: DataLoader, dir_max_acts: str) \
+        -> dict[int, torch.Tensor]:
     """
     For each target filter, find the top p images that cause it to output the
     highest activation.
@@ -29,25 +30,29 @@ def find_images_max_activations(args: argparse.Namespace, model: nn.Module,
         args (argparse.Namespace): The command line arguments.
         model (nn.Module): Feat() + Exp() model.
         dataloader (Dataloader): The dataloader for the reference dataset.
+        dir_max_acts (str): The directory to save the max activations to.
 
     Returns:
-        torch.Tensor: For each filter u, a sorted list of indices of the top p
-            images that cause the filter to output the highest activation.
-            Shape: [amount_target_filters, p].
+        dict[int, torch.Tensor]: For each filter u, a sorted list of indices of
+            the top p images that let the filter output the highest activation.
     """
-    # Check if the max activations have already been computed.
-    path = os.path.join(
-        args.save_dir,
-        f"max_activations/max_activations_{len(args.u)}_{args.p}.pt"
-    )
-    if os.path.exists(path):
-        print(f"Found precomputed max activations at {path}, loading..")
-        return torch.load(path)
+    # Check whether the max activations have already been computed.
+    max_imgs_sorted = {u: None for u in args.u}
+    for u in args.u:
+        path_max_acts = os.path.join(dir_max_acts, f"p-{args.p}_u-{u}.pt")
+        if os.path.exists(path_max_acts):
+            print(f"Found precomputed max activations in '{path_max_acts}'. "
+                  "Loading...", end=" ")
+            max_imgs_sorted[u] = torch.load(path_max_acts)
+            print("Done.")
+    if all(max_imgs_sorted[u] is not None for u in args.u):
+        return max_imgs_sorted
 
-    # For each target filter, save a sorted list of (-max_act, img_idx) tuples.
-    # max_acts_sorted[u] = [(-max_act, img_idx), ...]
-    max_acts_sorted = [[] for _ in range(len(args.u))]
-
+    # For each target filter, save a sorted list of (-max_act, img_idx) tuples,
+    # i.e. `max_acts_sorted[u] = [(-max_act, img_idx), ...]`.
+    print("Computing max activations...")
+    u_not_computed = [u for u in args.u if max_imgs_sorted[u] is None]
+    max_acts_sorted = {u: [] for u in u_not_computed}
     for batch_idx, (imgs, _, _) in enumerate(tqdm(dataloader)):
         # Move batch data to GPU.
         imgs = imgs.cuda().detach()
@@ -56,43 +61,104 @@ def find_images_max_activations(args: argparse.Namespace, model: nn.Module,
         acts = forward_Feat(args, model, imgs)
 
         # Only select the filters we are interested in.
-        acts = acts[:, args.u, :, :]
+        acts = acts[:, u_not_computed, :, :]
 
         # Get the max activation of each image on each target filter.
         max_acts_batch = acts.amax(dim=(-1, -2))
 
-        # Efficiently insert the max activations into the sorted lists.
-        for img_idx, max_acts_img in enumerate(max_acts_batch,
-                                               batch_idx * args.batch_size):
-            for max_act, max_acts_filter in zip(max_acts_img, max_acts_sorted):
-                tup = (-max_act.item(), img_idx)
-                insertion_idx = bisect_right(max_acts_filter, tup)
+        # Efficiently insert the max activations into the sorted lists. Use
+        # binary search to iteratively insert images that cause each filter to
+        # output the highest max activation into the top p.
+        for img_idx, max_acts_img in \
+                enumerate(max_acts_batch, start=batch_idx * args.batch_size):
+            for u, max_act in zip(u_not_computed, max_acts_img):
+                t = (-max_act.item(), img_idx)
+                insertion_idx = bisect_right(max_acts_sorted[u], t)
                 if insertion_idx < args.p:
-                    max_acts_filter.insert(insertion_idx, tup)
-                    if len(max_acts_filter) > args.p:
-                        max_acts_filter.pop()
+                    max_acts_sorted[u].insert(insertion_idx, t)
+                    if len(max_acts_sorted[u]) > args.p:
+                        max_acts_sorted[u].pop()
+    print("Done.")
 
-    # We only need the image indices, so we will extract those here.
-    max_activations = torch.tensor([[tup[1] for tup in max_act_imgs]
-                                    for max_act_imgs in max_acts_sorted],
-                                   dtype=torch.long)
+    # Extract the indices of the top p images.
+    for u in u_not_computed:
+        max_imgs_sorted[u] = torch.tensor([t[1] for t in max_acts_sorted[u]])
+        path_max_acts = os.path.join(dir_max_acts, f"p-{args.p}_u-{u}.pt")
+        print(f"Saving max activations to '{path_max_acts}'...", end=" ")
+        torch.save(max_imgs_sorted[u], path_max_acts)
+        print("Done.")
 
-    # Create the directory if it does not exist.
-    pathlib.Path(os.path.join(args.save_dir, "max_activations")) \
-        .mkdir(parents=True, exist_ok=True)
-    # Save the max activations.
-    print(f"Saving max activations to {path}..")
-    torch.save(max_activations, os.path.join(
-        args.save_dir,
-        f"max_activations/max_activations_{len(args.u)}_{args.p}.pt"
-    ))
+    return max_imgs_sorted
 
-    return max_activations
+
+def find_thresholds_act_masking(args: argparse.Namespace, model: nn.Module,
+                                dataloader: DataLoader,
+                                dir_thresholds_act_masking: str) \
+        -> dict[int, torch.Tensor]:
+    """
+    Find the threshold for each target filter such that the probability of an
+    activation being greather than the threshold is equal to 0.005.
+
+    Args:
+        args (argparse.Namespace): The command line arguments.
+        model (nn.Module): Feat() + Exp() model.
+        dataloader (Dataloader): The dataloader for the reference dataset.
+        dir_thresholds_act_masking (str): The directory to save the thresholds
+            to.
+
+    Returns:
+        dict[int, torch.Tensor]: For each filter u, the threshold such that the
+            probability of an activation being greather than the threshold is
+            equal to 0.005.
+    """
+    # Check whether the thresholds have already been computed.
+    thresholds_act_masking = {u: None for u in args.u}
+    for u in args.u:
+        path_thresholds_act_masking = os.path.join(dir_thresholds_act_masking,
+                                                   f"u-{u}.pt")
+        if os.path.exists(path_thresholds_act_masking):
+            print(f"Found precomputed thresholds in "
+                  f"'{path_thresholds_act_masking}'. Loading...", end=" ")
+            thresholds_act_masking[u] = torch.load(path_thresholds_act_masking)
+            print("Done.")
+    if all(thresholds_act_masking[u] is not None for u in args.u):
+        return thresholds_act_masking
+
+    # For each target filter, save all activations in a list.
+    print("Computing thresholds...")
+    u_not_computed = [u for u in args.u if thresholds_act_masking[u] is None]
+    acts_all = {u: torch.tensor([], device="cuda") for u in u_not_computed}
+    for imgs, _, _ in tqdm(dataloader):
+        # Move batch data to GPU.
+        imgs = imgs.cuda().detach()
+
+        # Forward pass through feature extractor Feat().
+        acts = forward_Feat(args, model, imgs)
+
+        # Save the activations.
+        for u in u_not_computed:
+            acts_all[u] = torch.cat((acts_all[u],
+                                     torch.flatten(acts[:, u, :, :])))
+    print("Done.")
+
+    # Compute the thresholds.
+    for u in u_not_computed:
+        thresholds_act_masking[u] = torch.quantile(torch.sort(acts_all[u])[0],
+                                                   0.005)
+        path_thresholds_act_masking = os.path.join(dir_thresholds_act_masking,
+                                                   f"u-{u}.pt")
+        print(f"Saving thresholds to '{path_thresholds_act_masking}'...",
+              end=" ")
+        torch.save(thresholds_act_masking[u], path_thresholds_act_masking)
+        print("Done.")
+
+    return thresholds_act_masking
 
 
 def explain(method: str, model: nn.Module, imgs: torch.Tensor,
             acts: torch.Tensor, acts_u: torch.Tensor,
-            acts_u_resized: torch.Tensor) -> torch.Tensor:
+            acts_u_resized: torch.Tensor, threshold_act_masking: float) \
+        -> torch.Tensor:
     """
     Explain the given image using the given method.
 
@@ -108,6 +174,7 @@ def explain(method: str, model: nn.Module, imgs: torch.Tensor,
         acts_u_resized (torch.Tensor): The activations of the target filter,
             resized to the size of the image.
             Shape: [batch_size, 1, 224, 224].
+        threshold_act_masking (float): The threshold for masking activations.
 
     Returns:
         torch.Tensor: The prediction of the model for each image.
@@ -118,11 +185,11 @@ def explain(method: str, model: nn.Module, imgs: torch.Tensor,
         pass
     if method == "image":
         # Image masking.
-        imgs *= acts_u_resized > args.mask_threshold
+        imgs *= acts_u_resized > threshold_act_masking
         acts = forward_Feat(args, model, imgs)
     elif method == "activation":
         # Activation masking.
-        acts *= acts_u > args.mask_threshold
+        acts *= acts_u > threshold_act_masking
     elif method == "projection":
         # Filter attention projection.
         # TODO Check whether this is correct. The paper says:
@@ -165,7 +232,10 @@ def inference(args: argparse.Namespace,
               model: nn.Module,
               dataloader: DataLoader,
               glove: GloVe,
-              embeddings: torch.Tensor) -> Optional[torch.Tensor]:
+              embeddings: torch.Tensor,
+              dir_heatmaps: str,
+              dir_max_acts: str,
+              dir_thresholds_act_masking: str) -> Optional[torch.Tensor]:
     """
     Perform inference on the given trained model.
 
@@ -176,29 +246,33 @@ def inference(args: argparse.Namespace,
         glove (GloVe): The GloVe embeddings object.
         embeddings (torch.Tensor): The ground-truth category embeddings.
             Shape: [word_embedding_dim, num_categories].
+        dir_heatmaps (str): The directory to save the heatmaps to.
+        dir_max_acts (str): The directory to save the max activations to.
+        dir_thresholds_act_masking (str): The directory to save the thresholds
+            for activation masking to.
     """
     # Set model to evaluation mode.
     model.eval()
 
-    # For each filter u, search for the p images that cause the maximum value
-    # of u's activation map to be the highest.
-    print("Extracting max activations...")
-    max_imgs_sorted = find_images_max_activations(args, model, dataloader)
-    print("Done extracting max activations.")
+    # For each filter u, look for the p images that activate it the most.
+    max_imgs_sorted = find_max_activations(args, model, dataloader,
+                                           dir_max_acts)
+
+    # For each filter u, find the threshold for activation masking.
+    thresholds_act_masking = find_thresholds_act_masking(
+        args, model, dataloader, dir_thresholds_act_masking
+    )
 
     # Create a table where each row contains the top tokens that were
     # accociated with a specific target filter.
     headers = ["Filter"] + [str(i) for i in range(1, args.num_tokens+1)]
     table = []
+
+    # Initialize the recall.
     recall = 0
 
-    # Create a directory to save the heatmaps.
-    heatmap_dir = os.path.join(args.save_dir, "heatmaps")
-    if not os.path.exists(heatmap_dir):
-        os.makedirs(heatmap_dir)
-
     # Loop over all target filters to explain each one.
-    for u, max_imgs_sorted_u in zip(args.u, max_imgs_sorted):
+    for u, max_imgs_sorted_u in max_imgs_sorted.items():
         print(f"Interpreting filter {u} with top {args.p} activated images...")
 
         # Create a new dataloader that only contains the p images that
@@ -216,6 +290,7 @@ def inference(args: argparse.Namespace,
         for batch_idx, (imgs, targets, masks) in enumerate(tqdm(dataloader_u)):
             # Move batch data to GPU.
             imgs = imgs.cuda().detach()
+            targets, masks = targets.cuda().detach(), masks.cuda().detach()
 
             # Forward pass through feature extractor Feat().
             acts = forward_Feat(args, model, imgs)
@@ -239,7 +314,7 @@ def inference(args: argparse.Namespace,
 
             # Explain the filters with the batch of images.
             preds = explain(args.method, model, imgs, acts, acts_u,
-                            acts_u_resized)
+                            acts_u_resized, thresholds_act_masking[u])
 
             # Compute the cosine similarity between each prediction and
             # each ground-truth word embedding. Then sort the results
@@ -274,17 +349,22 @@ def inference(args: argparse.Namespace,
                 if batch_idx * args.batch_size + img_idx \
                         >= args.num_heatmaps:
                     break
-                heatmap = create_heatmap(unnormalize(imgs[img_idx]),
-                                         acts_u_resized[img_idx])
-                heatmaps.append(heatmap)
+
+                heatmaps.append(create_heatmap(unnormalize(imgs[img_idx]),
+                                               acts_u_resized[img_idx]))
 
                 # Compute IoU between the heatmap and the mask.
                 W_u_i = word_preds_per_img[img_idx]
-                R_x = acts_u_resized[img_idx] > T_u
+                R_x = acts_u_resized[img_idx] > thresholds_act_masking[u]
+
+                masks_img_resized = F.interpolate(masks[img_idx],
+                                                  size=imgs.shape[-2:],
+                                                  mode="nearest").bool()
+                targets_img = targets[img_idx]
                 G_u_i = []
-                for M_j, t_j in zip(masks, targets):
+                for M_j, t_j in zip(masks_img_resized, targets_img):
                     IoU = (R_x & M_j).sum() / (R_x | M_j).sum()
-                    if IoU > args.iou_threshold:
+                    if IoU > args.threshold_iou:
                         G_u_i.append(t_j)
                 recall_u_i = len(set(G_u_i) & set(W_u_i)) / len(G_u_i)
                 recall += recall_u_i
@@ -294,36 +374,39 @@ def inference(args: argparse.Namespace,
         words = words[torch.argsort(counts, descending=True)[:args.num_tokens]]
 
         # Convert the word indices to word tokens.
-        with open(os.path.join(args.data_dir, "entities.txt"), "r") as f:
+        with open(os.path.join(args.dir_data, "entities.txt"), "r") as f:
             entities = [line.strip() for line in f if line != "\n"]
         tokens = [glove.itos[word] for word in words
                   if glove.itos[word] in entities]
         table.append([u] + tokens + ["-"] * (len(headers) - len(tokens) - 1))
 
-        heatmap_grid = torchvision.utils.make_grid(heatmaps)
-        if args.wandb:
-            # Log the heatmaps to wandb.
-            caption = " | ".join((f"Method: {args.method}",
-                                  f"Filter: {u}",
-                                  f"Concept: {tokens[0]}"))
-            images = wandb.Image(heatmap_grid, caption=caption)
-            wandb.log({"Activation heatmaps with associated concept": images})
-        else:
-            # Save the heatmaps to disk.
-            heatmap_path = os.path.join(heatmap_dir, f"filter_{u}.png")
-            torchvision.utils.save_image(heatmap_grid, heatmap_path)
+        # Visualize the activation heatmaps and save them to disk.
+        heatmaps_grid = torchvision.utils.make_grid(heatmaps)
+        path_heatmaps = os.path.join(
+            dir_heatmaps,
+            f"method-{args.method}_p-{args.p}_u-{u}.png"
+        )
+        torchvision.utils.save_image(heatmaps_grid, path_heatmaps)
 
+        # Log the heatmaps to wandb.
+        if args.wandb:
+            caption = " | ".join((f"Method: {args.method}",
+                                  f"Concept: {tokens[0]}",
+                                  f"Filter: {u}"))
+            images = wandb.Image(heatmaps_grid, caption=caption)
+            wandb.log({"Activation heatmaps with associated concept": images})
+
+    # Visualize the table of filter explanations.
+    print(tabulate(table, headers=headers, tablefmt="github"))
+
+    # Log the table of filter explanations to wandb.
     if args.wandb:
-        # Log the table of filter explanations to wandb.
         table = wandb.Table(data=table, columns=headers)
         wandb.log({f"Top-{args.num_tokens} filter explanations": table})
-    else:
-        # Pretty print the table of filter explanations.
-        print(tabulate(table, headers=headers, tablefmt="github"))
 
     # Compute the average recall.
     recall /= args.p * len(args.u)
-    print("Average recall:", recall)
+    print(f"Average recall: {recall}")
 
 
 def main(args: argparse.Namespace):
@@ -334,27 +417,40 @@ def main(args: argparse.Namespace):
         args (argparse.Namespace): The command line arguments.
     """
     # Set up output path.
-    args.save_dir = os.path.join(args.save_dir, args.name)
-    if not os.path.exists(args.save_dir):
-        os.makedirs(args.save_dir)
+    args.dir_save = os.path.join(args.dir_save, args.name)
+    if not os.path.exists(args.dir_save):
+        raise FileNotFoundError(f"Could not find '{args.dir_save}'. "
+                                "Please train a model first.")
 
-    # Store the command line arguments in a text file.
-    with open(os.path.join(args.save_dir, "infer_filter_args.txt"), "w") as f:
-        f.write(str(args))
+    # Create a directory to save the heatmaps.
+    dir_heatmap = os.path.join(args.dir_save, "heatmaps")
+    if not os.path.exists(dir_heatmap):
+        os.makedirs(dir_heatmap)
+
+    # Create a directory to save the maximum activations.
+    dir_max_acts = os.path.join(args.dir_save, "max_acts")
+    if not os.path.exists(dir_max_acts):
+        os.makedirs(dir_max_acts)
+
+    # Create a directory to save the thresholds for masking out activations.
+    dir_thresholds_act_masking = os.path.join(args.dir_save,
+                                              "thresholds_act_masking")
+    if not os.path.exists(dir_thresholds_act_masking):
+        os.makedirs(dir_thresholds_act_masking)
 
     # Set up wandb logging.
     if args.wandb:
-        wandb_id_file_path = pathlib.Path(os.path.join(args.save_dir,
+        path_wandb_id_file = pathlib.Path(os.path.join(args.dir_save,
                                                        "runid.txt"))
-        if wandb_id_file_path.exists():
-            resume_id = wandb_id_file_path.read_text()
+        if path_wandb_id_file.exists():
+            resume_id = path_wandb_id_file.read_text()
             wandb.init(project="temporal_scale", resume=resume_id,
                        name=args.name, config=args)
         else:
-            print("Creating new wandb instance...", wandb_id_file_path)
+            print("Creating new wandb instance...", path_wandb_id_file)
             run = wandb.init(project="temporal_scale",
                              name=args.name, config=args)
-            wandb_id_file_path.write_text(str(run.id))
+            path_wandb_id_file.write_text(str(run.id))
         wandb.config.update(args)
 
     # Set up GloVe word embeddings.
@@ -364,14 +460,14 @@ def main(args: argparse.Namespace):
     # Set up dataset.
     if args.refer == "vg":
         # Set up Visual Genome dataset.
-        root = os.path.join(args.data_dir, "vg")
+        root = os.path.join(args.dir_data, "vg")
         dataset = VisualGenomeImages(
             root=root,
             transform=data_transforms["val"]
         )
     elif args.refer == "coco":
         # Set up COCO dataset.
-        root = os.path.join(args.data_dir, "coco")
+        root = os.path.join(args.dir_data, "coco")
         dataset = CocoImages(
             root=os.path.join(root, "val2017"),
             annFile=os.path.join(root, "annotations/instances_val2017.json"),
@@ -387,15 +483,16 @@ def main(args: argparse.Namespace):
                             shuffle=False, num_workers=args.num_workers)
 
     # Set up model.
-    model = setup_explainer(args, random_feature=args.random)
-    if args.model_path is None:
-        args.model_path = os.path.join(args.save_dir, "ckpt_best.pth.tar")
-    if os.path.exists(args.model_path):
-        print(f"Loading model from '{args.model_path}'...")
-        model.load_state_dict(torch.load(args.model_path)["state_dict"])
-    else:
-        raise FileNotFoundError(f"No model found at '{args.model_path}'.")
+    model = setup_explainer(args, args.random)
+    if args.path_model is None:
+        args.path_model = os.path.join(args.dir_save, "ckpt_best.pth.tar")
+    if not os.path.exists(args.path_model):
+        raise FileNotFoundError(f"No model found at '{args.path_model}'.")
+
+    print(f"Loading model from '{args.path_model}'...", end=" ")
+    model.load_state_dict(torch.load(args.path_model)["state_dict"])
     model = model.cuda()
+    print("Done.")
 
     # Print confirmation message.
     print()
@@ -405,35 +502,28 @@ def main(args: argparse.Namespace):
     # ------------------------------ INFERENCE ------------------------------ #
 
     with torch.no_grad():
-        inference(args, model, dataloader, glove, embeddings)
+        inference(args, model, dataloader, glove, embeddings,
+                  dir_heatmap, dir_max_acts, dir_thresholds_act_masking)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--batch-size", type=int, default=512,
                         help="Batch size data loading")
-    parser.add_argument("--classifier-name", type=str, default="fc",
-                        help="Name of classifier layer")
-    parser.add_argument("--data-dir", type=str, default="./data",
-                        help="Path to the dataset directory")
-    parser.add_argument("--disable-save-heatmaps", action="store_false",
-                        help="Whether to save heatmaps to wandb")
-    parser.add_argument("--layer", type=str, default="layer4",
+    parser.add_argument("--dir-data", type=str, default="./data",
+                        help="Path to the datasets")
+    parser.add_argument("--dir-save", type=str, default="./outputs",
+                        help="Path to model checkpoints")
+    parser.add_argument("--layer-target", type=str, default="layer4",
                         help="Target layer to explain")
-    parser.add_argument("--mask-threshold", type=float, default=0.04,
-                        help="Threshold for masking out low activations. "
-                        "The default value ensures that the probability of "
-                        "an activation being above the threshold is 0.005.")
-    parser.add_argument("--iou-threshold", type=float, default=0.04,
-                        help="Threshold for filtering out low IoU boxes.")
+    parser.add_argument("--layer-classifier", type=str, default="fc",
+                        help="Name of classifier layer")
     parser.add_argument("--method", type=str, default="projection",
                         choices=("original", "image",
                                  "activation", "projection"),
                         help="Method used to explain the target filter")
     parser.add_argument("--model", type=str, default="resnet50",
                         help="Target network")
-    parser.add_argument("--model-path", type=str, default=None,
-                        help="Path to trained explainer model")
     parser.add_argument("--name", type=str, default="debug",
                         help="Experiment name")
     parser.add_argument("--num-heatmaps", type=int, default=5,
@@ -445,7 +535,9 @@ if __name__ == "__main__":
                         help="Number of subprocesses to use for data loading")
     parser.add_argument("--p", type=int, default=25,
                         help="Number of top activated images used to explain "
-                        "each filter")  # If filter projection is used.
+                        "each filter")
+    parser.add_argument("--path-model", type=str, default=None,
+                        help="Path to trained explainer model")
     parser.add_argument("--random", action="store_true",
                         help="Use a randomly initialized target model instead "
                         "of torchvision pretrained weights")
@@ -454,9 +546,9 @@ if __name__ == "__main__":
                         help="Reference dataset")
     parser.add_argument("--s", type=int, default=5,
                         help="Number of semantics contributed by each top "
-                        "activated image")  # If filter projection is used.
-    parser.add_argument("--save-dir", type=str, default="./outputs",
-                        help="Path to model checkpoints")
+                        "activated image")
+    parser.add_argument("--threshold-iou", type=float, default=0.04,
+                        help="Threshold for filtering out low IoU scores.")
     parser.add_argument("--u", type=list, default=list(range(0, 550, 50)),
                         help="List of indices of the target filters")
     parser.add_argument("--wandb", action="store_true",

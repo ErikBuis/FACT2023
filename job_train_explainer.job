@@ -4,8 +4,8 @@
 #SBATCH --gres=gpu:1
 #SBATCH --job-name=TrainExplainer
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=3
-#SBATCH --time=0:20:00
+#SBATCH --cpus-per-task=4
+#SBATCH --time=3:00:00
 #SBATCH --mem=32000M
 #SBATCH --output=slurm_train_explainer_%A.out
 
@@ -17,4 +17,4 @@ cd $HOME/FACT2023
 
 source activate fact2023
 
-srun python -u train_explainer.py --model resnet18 --epochs 2 --num-workers 3
+srun python -u train_explainer.py --model resnet50 --epochs 1 --num-workers 4 --name resnet50-layer4-imagenet-vg --refer vg

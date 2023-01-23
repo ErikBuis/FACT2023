@@ -77,7 +77,7 @@ def train_one_epoch(args: argparse.Namespace,
     correct_train = {k: 0 for k in ks}
 
     # Iterate over the training set.
-    for batch_idx, (imgs, targets, masks) in enumerate(train_loader, start=1):
+    for batch_idx, (imgs, targets, masks) in enumerate(train_loader):
         # Move batch data to GPU.
         imgs = imgs.cuda()
         targets, masks = targets.squeeze(0).cuda(), masks.squeeze(0).cuda()
@@ -94,7 +94,6 @@ def train_one_epoch(args: argparse.Namespace,
         # Backward propagation.
         optimizer.zero_grad()
         if loss.requires_grad:
-            print("Loss requires grad.")
             loss.backward()
             optimizer.step()
 
@@ -120,25 +119,25 @@ def train_one_epoch(args: argparse.Namespace,
                     .any().detach().item()
 
         # Print logging data.
-        if batch_idx % 10 == 0 or batch_idx == amount_batches:
+        if batch_idx % 10 == 0 or batch_idx == amount_batches - 1:
             epoch_chars = len(str(args.epochs))
             batch_chars = len(str(amount_batches))
             print(f"[Epoch {epoch:{epoch_chars}d}: "
-                  f"{batch_idx:{batch_chars}d}/{amount_batches} "
-                  f"({int(batch_idx / amount_batches * 100):3d}%)] "
+                  f"{batch_idx + 1:{batch_chars}d}/{amount_batches} "
+                  f"({int((batch_idx + 1) / amount_batches * 100):3d}%)] "
                   f"Loss: {loss.cpu().item():.6f}")
             if args.wandb:
                 wandb.log({"Iter_Train_Loss": loss})
 
         # Save checkpoint.
-        if batch_idx % args.save_every == 0:
+        if (batch_idx + 1) % args.save_every == 0:
             torch.save(
                 {
                     "epoch": epoch,
                     "state_dict": model.state_dict(),
                     "optimizer": optimizer.state_dict()
                 },
-                os.path.join(args.save_dir, "ckpt_tmp.pth.tar")
+                os.path.join(args.dir_save, "ckpt_tmp.pth.tar")
             )
 
         # Free memory.
@@ -259,24 +258,26 @@ def main(args: argparse.Namespace):
 
     # Set up run name.
     if not args.name:
-        args.name = f"vsf_{args.refer}_{args.model}_{args.layer}_" \
+        args.name = f"vsf_{args.refer}_{args.model}_{args.layer_target}_" \
             f"{args.anno_rate:.1f}"
     if args.random:
         args.name += "_random"
 
     # Set up output path.
-    args.save_dir = os.path.join(args.save_dir, args.name)
-    if not os.path.exists(args.save_dir):
-        os.makedirs(args.save_dir)
+    args.dir_save = os.path.join(args.dir_save, args.name)
+    if not os.path.exists(args.dir_save):
+        os.makedirs(args.dir_save)
 
     # Set up wandb logging.
     if args.wandb:
-        wandb_id_file_path = pathlib.Path(os.path.join(args.save_dir,
+        path_wandb_id_file = pathlib.Path(os.path.join(args.dir_save,
                                                        "runid.txt"))
-        print("Creating new wandb instance...", wandb_id_file_path)
+        print(f"Creating new wandb instance at '{path_wandb_id_file}'...",
+              end=" ")
         run = wandb.init(project="temporal_scale",
                          name=args.name, config=args)
-        wandb_id_file_path.write_text(str(run.id))
+        path_wandb_id_file.write_text(str(run.id))
+        print("Done.")
 
     # Set up GloVe word embeddings.
     glove = GloVe(name="6B", dim=args.word_embedding_dim)
@@ -285,7 +286,7 @@ def main(args: argparse.Namespace):
     # Set up dataset.
     if args.refer == "vg":
         # Set up Visual Genome dataset.
-        root = os.path.join(args.data_dir, "vg")
+        root = os.path.join(args.dir_data, "vg")
         dataset = VisualGenomeInstances(
             root=root,
             transform=data_transforms["val"]
@@ -304,7 +305,7 @@ def main(args: argparse.Namespace):
         )
     elif args.refer == "coco":
         # Set up COCO dataset.
-        root = os.path.join(args.data_dir, "coco")
+        root = os.path.join(args.dir_data, "coco")
         datasets = {}
         datasets["train"] = CocoInstances(
             root=os.path.join(root, "train2017"),
@@ -333,15 +334,16 @@ def main(args: argparse.Namespace):
     }
 
     # Set up model.
-    model = setup_explainer(args, random_feature=args.random)
-    if args.model_path is None:
-        args.model_path = os.path.join(args.save_dir, "ckpt_best.pth.tar")
-    if os.path.exists(args.model_path):
-        print(f"Loading model from '{args.model_path}'...")
-        model.load_state_dict(torch.load(args.model_path)["state_dict"])
+    model = setup_explainer(args, args.random)
+    if args.path_model is None:
+        args.path_model = os.path.join(args.dir_save, "ckpt_best.pth.tar")
+    if os.path.exists(args.path_model):
+        print(f"Loading model from '{args.path_model}'...", end=" ")
+        model.load_state_dict(torch.load(args.path_model)["state_dict"])
+        print("Done.")
     else:
-        print(f"No model found at '{args.model_path}'. "
-              "Training from scratch...")
+        print(f"No model found at '{args.path_model}'. "
+              "Training from scratch.")
     model = model.cuda()
 
     # Set up optimizer, scheduler and loss function.
@@ -360,7 +362,7 @@ def main(args: argparse.Namespace):
     accs_train = []
     accs_valid = []
 
-    with open(os.path.join(args.save_dir, "valid.txt"), "w") as f:
+    with open(os.path.join(args.dir_save, "valid.txt"), "w") as f:
         for epoch in range(args.epochs):
             print()
             print(f"[ Epoch {epoch} starting ]".center(79, "-"))
@@ -412,19 +414,20 @@ def main(args: argparse.Namespace):
                         "state_dict": model.state_dict(),
                         "optimizer": optimizer.state_dict()
                     },
-                    os.path.join(args.save_dir, "ckpt_best.pth.tar")
+                    os.path.join(args.dir_save, "ckpt_best.pth.tar")
                 )
                 plt.figure()
                 plt.plot(loss_train, "-o", label="train")
                 plt.plot(loss_valid, "-o", label="valid")
                 plt.xlabel("Epoch")
-                plt.ylabel("Loss (")
+                plt.ylabel("Loss")
                 plt.legend(loc="upper right")
-                plt.savefig(os.path.join(args.save_dir, "losses.png"))
+                plt.savefig(os.path.join(args.dir_save, "losses.png"))
                 plt.close()
 
     # Save wandb summary.
-    wandb.run.summary["best_validation_loss"] = loss_valid_best
+    if args.wandb:
+        wandb.run.summary["best_validation_loss"] = loss_valid_best
 
 
 if __name__ == "__main__":
@@ -433,32 +436,32 @@ if __name__ == "__main__":
                         help="Fraction of concepts used for supervision")
     parser.add_argument("--batch-size", type=int, default=512,
                         help="Batch size for data loading")
-    parser.add_argument("--classifier-name", type=str, default="fc",
-                        help="Name of classifier layer")
-    parser.add_argument("--data-dir", type=str, default="./data",
-                        help="Path to the dataset directory")
+    parser.add_argument("--dir-data", type=str, default="./data",
+                        help="Path to the datasets")
+    parser.add_argument("--dir-save", type=str, default="./outputs",
+                        help="Path to model checkpoints")
     parser.add_argument("--epochs", type=int, default=10,
                         help="Number of epochs")
-    parser.add_argument("--layer", type=str, default="layer4",
+    parser.add_argument("--layer-classifier", type=str, default="fc",
+                        help="Name of classifier layer")
+    parser.add_argument("--layer-target", type=str, default="layer4",
                         help="Target layer to explain")
     parser.add_argument("--margin", type=float, default=1.0,
                         help="Hyperparameter for margin ranking loss")
     parser.add_argument("--model", type=str, default="resnet50",
                         help="Target network")
-    parser.add_argument("--model-path", type=Optional[str], default=None,
-                        help="Path to trained explainer model")
     parser.add_argument("--name", type=str, default="debug",
                         help="Experiment name")
     parser.add_argument("--num-workers", type=int, default=16,
                         help="Number of subprocesses to use for data loading")
+    parser.add_argument("--path-model", type=Optional[str], default=None,
+                        help="Path to trained explainer model")
     parser.add_argument("--random", action="store_true",
                         help="Use a randomly initialized target model instead "
                         "of torchvision pretrained weights")
     parser.add_argument("--refer", type=str, default="coco",
                         choices=("vg", "coco"),
                         help="Reference dataset")
-    parser.add_argument("--save-dir", type=str, default="./outputs",
-                        help="Path to model checkpoints")
     parser.add_argument("--save-every", type=int, default=1000,
                         help="How often to save a model checkpoint")
     parser.add_argument("--seed", type=int, default=42,

@@ -1,0 +1,20 @@
+#!/bin/bash
+
+#SBATCH --partition=gpu_titanrtx_shared_course
+#SBATCH --gres=gpu:1
+#SBATCH --job-name=InferFilter
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=4
+#SBATCH --time=1:00:00
+#SBATCH --mem=32000M
+#SBATCH --output=slurm_infer_filter_%A.out
+
+module purge
+module load 2021
+module load Anaconda3/2021.05
+
+cd $HOME/FACT2023
+
+source activate fact2023
+
+srun python -u infer_filter.py --model resnet50 --layer-target layer4 --num-workers 4 --name resnet50-layer4-imagenet-vg --refer vg --weigh-s-by-relevance --batch-size 1

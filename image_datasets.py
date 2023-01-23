@@ -86,23 +86,23 @@ class _VisualGenomeAbstract(Dataset):
 
     def _load_samples(self) -> list[dict[str, list[dict[str, int]]]]:
         """Load the object data from the json file."""
-        print("Loading object data...")
+        print("Loading object data...", end=" ")
         path = os.path.join(self.root, "vg_objects_preprocessed.json")
         if not os.path.exists(path):
             raise FileNotFoundError(f"{path} not found. "
                                     "Please run `preprocess.py` first.")
         with open(path) as f:
             samples = json.load(f)
-        print("Loading complete.")
+        print("Done.")
         return samples
 
     def _load_labels(self) -> dict[str, int]:
         """Load the labels from the pickle file."""
-        print("Loading labels...")
+        print("Loading labels...", end=" ")
         path = os.path.join(self.root, "vg_labels.pkl")
         with open(path, "rb") as f:
             labels = pickle.load(f)
-        print("Loading complete.")
+        print("Done.")
         return labels
 
 
@@ -143,10 +143,12 @@ class VisualGenomeImages(_VisualGenomeAbstract):
         for label, bboxes in self.samples[sample_id]["objects"].items():
             for bbox in bboxes:
                 # Create a one-hot target vector for each instance.
-                # TODO Does it make sense to add zero tensor's to target list
-                # TODO if label not in the label list?
-                # or is it better to skip these images.
                 target = torch.zeros((len(self.labels),))
+                # TODO Does it make sense to add zero tensors to `targets` if
+                # TODO the corresponding label is not in `self.labels`?
+                # TODO If we would just skip these images, the dataloader will
+                # TODO crash, because there are images whose targets are all
+                # TODO not present in the list of valid labels.
                 if label in self.labels:
                     target[self.labels[label]] = 1
                 targets.append(target)
@@ -157,6 +159,7 @@ class VisualGenomeImages(_VisualGenomeAbstract):
                      bbox["x"]:bbox["x"] + bbox["w"]] = 1
                 mask = self.mask_transform(mask)
                 masks.append(mask)
+
         targets = torch.stack(targets)
         masks = torch.stack(masks)
 

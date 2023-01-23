@@ -4,27 +4,24 @@ import json
 import os
 from collections import defaultdict
 
-from tqdm import tqdm
-
 
 def _load_samples(root: str) -> list:
     """Load the object data from the json file."""
-    print("Loading object data...")
+    print("Loading object data...", end=" ")
     path = os.path.join(root, "vg_objects.json")
     with open(path) as f:
         samples = json.load(f)
-    print("Loading complete.")
-
+    print("Done.")
     return samples
 
 
 def _save_samples(root: str, samples: list[dict[str, list[dict[str, int]]]]):
     """Save the preprocessed object data to the json file."""
-    print("Saving object data...")
+    print("Saving object data...", end=" ")
     path = os.path.join(root, "vg_objects_preprocessed.json")
     with open(path, "w") as f:
         json.dump(samples, f)
-    print("Saving complete.")
+    print("Done.")
 
 
 def preprocess_vg(samples: list, min_count: int = 100) \
@@ -48,10 +45,11 @@ def preprocess_vg(samples: list, min_count: int = 100) \
     Returns:
         list[dict[str, list[dict[str, int]]]]: The preprocessed samples.
     """
+    # Go through the dataset to perform the main preprocessing steps.
+    print("Preprocessing data...", end=" ")
     catagory_counts = defaultdict(int)
     preprocessed_samples = []
-    print("Preprocessing data...")
-    for image in tqdm(samples):
+    for image in samples:
         # Remove images that have no box-able annotations.
         if len(image["objects"]) == 0:
             continue
@@ -72,22 +70,32 @@ def preprocess_vg(samples: list, min_count: int = 100) \
 
         preprocessed_samples.append({"image_id": image["image_id"],
                                      "objects": result})
+    print("Done.")
 
-    # Delete categories that appear in less than 100 training images.
-    print(f"Removing categories that appear in less than {min_count} "
-          "training images...")
+    # Search for categories that appear in less than 100 training images.
+    print(f"Searching for categories that appear in less than {min_count} "
+          "training images...", end=" ")
     objects_to_remove = [category
                          for category, count in catagory_counts.items()
                          if count < min_count]
-    print(f"Removing {len(objects_to_remove)} categories. "
-          f"{len(catagory_counts) - len(objects_to_remove)} remain.")
-    for image in tqdm(preprocessed_samples):
+    print("Done.")
+
+    # Delete categories that appear in less than 100 training images.
+    print(f"Removing {len(objects_to_remove)} categories...")
+    for image in preprocessed_samples:
         for category in objects_to_remove:
             image["objects"].pop(category, None)
     preprocessed_samples = [image for image in preprocessed_samples
                             if len(image["objects"]) > 0]
-    print("Preprocessing complete. "
-          f"{len(preprocessed_samples)} images remain.")
+    print("Done.")
+
+    # Print some statistics.
+    print()
+    print("Preprocessing complete.")
+    print("Amount of categories remaining: "
+          f"{len(catagory_counts) - len(objects_to_remove)}")
+    print("Amount of images remaining: "
+          f"{len(preprocessed_samples)}")
 
     return preprocessed_samples
 

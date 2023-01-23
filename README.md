@@ -3,30 +3,30 @@
 # Requirements
 
 ## Datasets
-### [Common Objects in Context (COCO)](https://cocodataset.org/#home) 
+### [Common Objects in Context (COCO)](https://cocodataset.org/#home)
 
-- Please follow the instructions in the 
-[COCO API README](https://github.com/cocodataset/cocoapi) and 
+- Please follow the instructions in the
+[COCO API README](https://github.com/cocodataset/cocoapi) and
 [here](data/README.md) to download and setup the COCO data.
 
 ### [Visual Genome (VG)](https://visualgenome.org/)
 
-Run the following script to download and setup the VG data.
+Run the following script to download and preprocess the VG data.
 
 ```commandline
-bash vg.sh
+bash job_preprocess_vg.job
 ```
 
 ### [GloVe](https://nlp.stanford.edu/projects/glove/)
 
-- We load the pretrained GloVe word embeddings directly from the 
+- We load the pretrained GloVe word embeddings directly from the
 [torchtext](https://torchtext.readthedocs.io/en/latest/vocab.html#glove) library.
 
 ### Social Media <u>P</u>hotographs <u>o</u>f US <u>P</u>oliticians (PoP)
 
 - The list of entities used to discover new concepts is provided in `data/entities.txt`.
 
-## Getting started 
+## Getting started
 
 ### Requirements
 
