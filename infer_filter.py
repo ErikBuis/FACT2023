@@ -36,7 +36,10 @@ def find_images_max_activations(args: argparse.Namespace, model: nn.Module,
             Shape: [amount_target_filters, p].
     """
     # Check if the max activations have already been computed.
-    path = os.path.join(args.save_dir, f"max_activations/max_activations_{len(args.u)}_{args.p}.pt")
+    path = os.path.join(
+        args.save_dir,
+        f"max_activations/max_activations_{len(args.u)}_{args.p}.pt"
+    )
     if os.path.exists(path):
         print(f"Found precomputed max activations at {path}, loading..")
         return torch.load(path)
@@ -70,16 +73,20 @@ def find_images_max_activations(args: argparse.Namespace, model: nn.Module,
                         max_acts_filter.pop()
 
     # We only need the image indices, so we will extract those here.
-    max_activations = torch.tensor([[tup[1] for tup in max_act_imgs] 
-                                    for max_act_imgs in max_acts_sorted], dtype=torch.long)
-                        
+    max_activations = torch.tensor([[tup[1] for tup in max_act_imgs]
+                                    for max_act_imgs in max_acts_sorted],
+                                   dtype=torch.long)
+
     # Create the directory if it does not exist.
-    pathlib.Path(os.path.join(args.save_dir, "max_activations")).mkdir(parents=True, exist_ok=True)
+    pathlib.Path(os.path.join(args.save_dir, "max_activations")) \
+        .mkdir(parents=True, exist_ok=True)
     # Save the max activations.
     print(f"Saving max activations to {path}..")
     torch.save(max_activations, os.path.join(
-        args.save_dir, f"max_activations/max_activations_{len(args.u)}_{args.p}.pt"))
-    
+        args.save_dir,
+        f"max_activations/max_activations_{len(args.u)}_{args.p}.pt"
+    ))
+
     return max_activations
 
 
@@ -183,6 +190,7 @@ def inference(args: argparse.Namespace,
     # accociated with a specific target filter.
     headers = ["Filter"] + [str(i) for i in range(1, args.num_tokens+1)]
     table = []
+    recall = 0
 
     # Create a directory to save the heatmaps.
     heatmap_dir = os.path.join(args.save_dir, "heatmaps")
@@ -205,7 +213,7 @@ def inference(args: argparse.Namespace,
 
         # Iterate over the p images that activated the target filter the
         # most. Use batches for efficiency.
-        for batch_idx, (imgs, _, _) in tqdm(enumerate(dataloader_u)):
+        for batch_idx, (imgs, targets, masks) in enumerate(tqdm(dataloader_u)):
             # Move batch data to GPU.
             imgs = imgs.cuda().detach()
 
@@ -230,7 +238,8 @@ def inference(args: argparse.Namespace,
                 max_acts_u = max_acts_u[~imgs_no_activation]
 
             # Explain the filters with the batch of images.
-            preds = explain(args.method, model, imgs, acts, acts_u, acts_u_resized)
+            preds = explain(args.method, model, imgs, acts, acts_u,
+                            acts_u_resized)
 
             # Compute the cosine similarity between each prediction and
             # each ground-truth word embedding. Then sort the results
@@ -261,13 +270,24 @@ def inference(args: argparse.Namespace,
                 else torch.cat((word_preds, word_preds_per_img))
 
             # Visualize activation heatmaps for the top `num_heatmaps` images.
-            if args.wandb:
-                for img_idx in range(len(imgs)):
-                    if batch_idx * args.batch_size + img_idx \
-                            >= args.num_heatmaps:
-                        break
-                    heatmaps.append(create_heatmap(unnormalize(imgs[img_idx]),
-                                                   acts_u_resized[img_idx]))
+            for img_idx in range(len(imgs)):
+                if batch_idx * args.batch_size + img_idx \
+                        >= args.num_heatmaps:
+                    break
+                heatmap = create_heatmap(unnormalize(imgs[img_idx]),
+                                         acts_u_resized[img_idx])
+                heatmaps.append(heatmap)
+
+                # Compute IoU between the heatmap and the mask.
+                W_u_i = word_preds_per_img[img_idx]
+                R_x = acts_u_resized[img_idx] > T_u
+                G_u_i = []
+                for M_j, t_j in zip(masks, targets):
+                    IoU = (R_x & M_j).sum() / (R_x | M_j).sum()
+                    if IoU > args.iou_threshold:
+                        G_u_i.append(t_j)
+                recall_u_i = len(set(G_u_i) & set(W_u_i)) / len(G_u_i)
+                recall += recall_u_i
 
         # Sort the predicteded words by their frequencies.
         words, counts = torch.unique(word_preds, return_counts=True)
@@ -280,9 +300,9 @@ def inference(args: argparse.Namespace,
                   if glove.itos[word] in entities]
         table.append([u] + tokens + ["-"] * (len(headers) - len(tokens) - 1))
 
+        heatmap_grid = torchvision.utils.make_grid(heatmaps)
         if args.wandb:
             # Log the heatmaps to wandb.
-            heatmap_grid = torchvision.utils.make_grid(heatmaps)
             caption = " | ".join((f"Method: {args.method}",
                                   f"Filter: {u}",
                                   f"Concept: {tokens[0]}"))
@@ -300,6 +320,10 @@ def inference(args: argparse.Namespace,
     else:
         # Pretty print the table of filter explanations.
         print(tabulate(table, headers=headers, tablefmt="github"))
+
+    # Compute the average recall.
+    recall /= args.p * len(args.u)
+    print("Average recall:", recall)
 
 
 def main(args: argparse.Namespace):
@@ -400,6 +424,8 @@ if __name__ == "__main__":
                         help="Threshold for masking out low activations. "
                         "The default value ensures that the probability of "
                         "an activation being above the threshold is 0.005.")
+    parser.add_argument("--iou-threshold", type=float, default=0.04,
+                        help="Threshold for filtering out low IoU boxes.")
     parser.add_argument("--method", type=str, default="projection",
                         choices=("original", "image",
                                  "activation", "projection"),

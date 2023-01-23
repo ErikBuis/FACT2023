@@ -83,12 +83,20 @@ def train_one_epoch(args: argparse.Namespace,
         targets, masks = targets.squeeze(0).cuda(), masks.squeeze(0).cuda()
 
         # Forward pass.
-        # TODO is torch.flatten(preds, 1) necessary before passing the
-        # TODO activations into the explainer Exp()?
         acts = forward_Feat(args, model, imgs)
         if torch.sum(masks) > 0:
             acts *= masks
         preds = forward_Exp(args, model, acts)
+
+        # Calculate loss.
+        loss = loss_fn(preds, targets, embeddings, train_label_indices)
+
+        # Backward propagation.
+        optimizer.zero_grad()
+        if loss.requires_grad:
+            print("Loss requires grad.")
+            loss.backward()
+            optimizer.step()
 
         # Compute the cosine similarity between each prediction and
         # each ground-truth category embedding. Then sort the results
@@ -108,17 +116,8 @@ def train_one_epoch(args: argparse.Namespace,
                 correct_train[k] += targets[i, cat_preds[:k]] \
                     .any().detach().item()
 
-        # Calculate loss.
-        loss = loss_fn(preds, targets, embeddings, train_label_indices)
-
         # Update loss.
         loss_train += loss.data.detach().item()
-
-        # Backward propagation.
-        optimizer.zero_grad()
-        if loss.requires_grad:
-            loss.backward()
-            optimizer.step()
 
         # Print logging data.
         if batch_idx % 10 == 0 or batch_idx == amount_batches:

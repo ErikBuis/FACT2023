@@ -126,6 +126,8 @@ def forward_Exp(args: argparse.Namespace, model: nn.Module,
     target_layer_seen = False
     for name, module in model._modules.items():
         if target_layer_seen:
+            if name == args.classifier_name:
+                acts = torch.flatten(acts, start_dim=1)
             acts = module(acts)
         elif name == args.layer:
             target_layer_seen = True

@@ -14,9 +14,6 @@
 **/__pycache__/**
 **/.vector_cache/**
 
-# Ignore Lisa job files.
-**.job
-
 # Ignore the raw outputs of the training process.
 **/outputs/**
 **.out

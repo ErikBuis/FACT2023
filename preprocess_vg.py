@@ -14,7 +14,7 @@ def _load_samples(root: str) -> list:
     with open(path) as f:
         samples = json.load(f)
     print("Loading complete.")
-    
+
     return samples
 
 
@@ -75,19 +75,19 @@ def preprocess_vg(samples: list, min_count: int = 100) \
 
     # Delete categories that appear in less than 100 training images.
     print(f"Removing categories that appear in less than {min_count} "
-                 "training images...")
+          "training images...")
     objects_to_remove = [category
                          for category, count in catagory_counts.items()
                          if count < min_count]
     print(f"Removing {len(objects_to_remove)} categories. "
-                 f"{len(catagory_counts) - len(objects_to_remove)} remain.")
+          f"{len(catagory_counts) - len(objects_to_remove)} remain.")
     for image in tqdm(preprocessed_samples):
         for category in objects_to_remove:
             image["objects"].pop(category, None)
     preprocessed_samples = [image for image in preprocessed_samples
                             if len(image["objects"]) > 0]
     print("Preprocessing complete. "
-                 f"{len(preprocessed_samples)} images remain.")
+          f"{len(preprocessed_samples)} images remain.")
 
     return preprocessed_samples
 
