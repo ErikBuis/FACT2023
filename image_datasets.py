@@ -289,7 +289,7 @@ class CocoImages(_CocoAbstract):
     """Coco dataset that returns images."""
 
     def __getitem__(self, index: int) \
-            -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+            -> Tuple[Image.Image, torch.Tensor, torch.Tensor]:
         """
         Get a single image from the dataset, along with all its instances.
         An "instance" refers to a specific occurrence of an object in an image.
@@ -298,7 +298,7 @@ class CocoImages(_CocoAbstract):
             index (int): Index of the image to be returned.
 
         Returns:
-            Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+            Tuple[Image.Image, torch.Tensor, torch.Tensor]:
                 - Image from the dataset.
                     Shape: [3, 224, 224].
                 - Multiple-hot target category vector for each instance.
@@ -318,6 +318,7 @@ class CocoImages(_CocoAbstract):
         if self.transform is not None:
             img = self.transform(img)
 
+        # TODO: This doesn't work for images with no instances.
         # Create a multiple-hot target vector for each instance.
         targets = torch.stack([self.cat_mappings["idtov"][ann["category_id"]]
                                for ann in anns])
@@ -354,7 +355,7 @@ class CocoInstances(_CocoAbstract):
         self.ids = sorted(self.coco.anns.keys())
 
     def __getitem__(self, index: int) \
-            -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+            -> Tuple[Image.Image, torch.Tensor, torch.Tensor]:
         """
         Get a single instance from the dataset.
         An "instance" refers to a specific occurrence of an object in an image.
@@ -363,7 +364,7 @@ class CocoInstances(_CocoAbstract):
             index (int): Index of the instance to be returned.
 
         Returns:
-            Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+            Tuple[Image.Image, torch.Tensor, torch.Tensor]:
                 - Image in which the instance is found.
                     Shape: [3, 224, 224].
                 - Multiple-hot target category vector.

@@ -508,7 +508,7 @@ def main(args: argparse.Namespace):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--batch-size", type=int, default=512,
+    parser.add_argument("--batch-size", type=int, default=1,
                         help="Batch size data loading")
     parser.add_argument("--dir-data", type=str, default="./data",
                         help="Path to the datasets")
@@ -563,6 +563,6 @@ if __name__ == "__main__":
                         help="GloVe word embedding dimension to use")
 
     args = parser.parse_args()
-    print(args)
+    print(args, "\n")
 
     main(args)
