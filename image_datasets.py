@@ -7,7 +7,7 @@ import torch
 import torchvision.transforms as transforms
 from PIL import Image
 from torch.utils.data import Dataset
-from torchvision.datasets import CocoDetection
+from torchtext.vocab import GloVe
 from torchvision.transforms.functional import InterpolationMode
 
 # Define the ImageNet normalization parameters.
@@ -108,6 +108,36 @@ class _VisualGenomeAbstract(Dataset):
 
 class VisualGenomeImages(_VisualGenomeAbstract):
     """Visual Genome dataset that returns images."""
+    
+    def __init__(self,
+                 root: str,
+                 transform: Optional[Callable],
+                 glove: GloVe,
+                 mask_width: int = 7,
+                 mask_height: int = 7):
+        """
+        Initialize an object which can load VG images and annotations.
+
+        Args:
+            root (str): The root directory where VG images were downloaded to.
+            transform (Optional[Callable]): Transform to apply to the images.
+            glove (Glove): GloVe word embeddings.
+            mask_width (int, optional): Width that the segmentation mask should
+                be resized to. Defaults to 7.
+            mask_height (int, optional): Height that the segmentation mask
+                should be resized to. Defaults to 7.
+        """
+        super().__init__(root, transform, mask_width, mask_height)
+        self.glove = glove
+        
+        # Remove samples that don't have any labels in self.labels.
+        remove_indices = []
+        for sample_id, sample in enumerate(self.samples):
+            if not any(label in self.labels 
+                       for label in sample["objects"].keys()):
+                remove_indices.append(sample_id)
+        self.samples = [sample for i, sample in enumerate(self.samples)
+                        if i not in remove_indices]
 
     def __len__(self) -> int:
         """Get the amount of images in the VG dataset."""
@@ -127,7 +157,7 @@ class VisualGenomeImages(_VisualGenomeAbstract):
                 - Image from the dataset.
                     Shape: [3, 224, 224]
                 - One-hot target category vector for each instance.
-                    Shape: [num_instances, num_categories]
+                    Shape: [num_instances]
                 - Instance mask for each instance.
                     Shape: [num_instances, 1, mask_width, mask_height]
         """
@@ -141,17 +171,11 @@ class VisualGenomeImages(_VisualGenomeAbstract):
         targets = []
         masks = []
         for label, bboxes in self.samples[sample_id]["objects"].items():
+            if label not in self.labels:
+                continue
             for bbox in bboxes:
-                # Create a one-hot target vector for each instance.
-                target = torch.zeros((len(self.labels),))
-                # TODO Does it make sense to add zero tensors to `targets` if
-                # TODO the corresponding label is not in `self.labels`?
-                # TODO If we would just skip these images, the dataloader will
-                # TODO crash, because there are images whose targets are all
-                # TODO not present in the list of valid labels.
-                if label in self.labels:
-                    target[self.labels[label]] = 1
-                targets.append(target)
+                # Get the glove index that corresponds to this label.
+                targets.append(self.glove.stoi[label])
 
                 # Load the segmentation mask for each instance.
                 mask = torch.zeros(img_og.size)
@@ -239,7 +263,7 @@ class VisualGenomeInstances(_VisualGenomeAbstract):
         return img, target, mask
 
 
-class _CocoAbstract(CocoDetection):
+class _CocoAbstract(Dataset):
     """Abstract class for the COCO dataset."""
 
     def __init__(self, root: str, annFile: str, cat_mappings_file: str,
@@ -259,92 +283,33 @@ class _CocoAbstract(CocoDetection):
             mask_height (int, optional): Height that the segmentation mask
                 should be resized to. Defaults to 7.
         """
-        super(CocoDetection, self).__init__(root, transform=transform)
+        super().__init__()
         from pycocotools.coco import COCO
+        self.root = root
         self.coco = COCO(annFile)
+        self.transform = transform
         self.ids = sorted(self.coco.imgs.keys())
-        print(f"Loaded {len(self.ids)} images from {annFile}")
         self.mask_transform = create_mask_transform(mask_width, mask_height)
         self.mask_width = mask_width
         self.mask_height = mask_height
 
         # Load the categories. `self.cat_mappings` is a dictionary that
         # contains the following entries:
-        # - "stoi" (String TO Index): a dictionary that maps a category name to
-        #   its indices in the embedding matrix (can be multiple).
-        # - "itos" (Index TO String): a dictionary that maps an index in the
-        #   embedding matrix to its category name.
-        self.cat_mappings = torch.load(cat_mappings_file)
+        # - "stoi" (String TO Index): a dictionary that maps a COCO category 
+        #   token to its GloVe index in the embedding matrix.
+        # - "itos" (Index TO String): a dictionary that maps a GloVe index in 
+        #   the embedding matrix to its COCO category token.
+        with open(cat_mappings_file, "rb") as f:
+            self.cat_mappings = pickle.load(f)
 
-        # - "idtov" (ID TO Vector): a dictionary that maps a category id
-        #   to its multiple-hot vector.
-        empty_vector = torch.zeros((len(self.cat_mappings["itos"]),))
-        self.cat_mappings["idtov"] = {}
-        for category_id, indices in \
-                enumerate(self.cat_mappings["stoi"].values(), start=1):
-            self.cat_mappings["idtov"][category_id] = empty_vector.clone()
-            for index in indices:
-                idx_in_vector = list(self.cat_mappings["itos"]).index(index)
-                self.cat_mappings["idtov"][category_id][idx_in_vector] = 1
+    def __len__(self) -> int:
+        """Get the amount of instances/images in the COCO dataset."""
+        return len(self.ids)
+
 
 class CocoImages(_CocoAbstract):
     """Coco dataset that returns images."""
-
-    def __getitem__(self, index: int) \
-            -> Tuple[Image.Image, torch.Tensor, torch.Tensor]:
-        """
-        Get a single image from the dataset, along with all its instances.
-        An "instance" refers to a specific occurrence of an object in an image.
-
-        Args:
-            index (int): Index of the image to be returned.
-
-        Returns:
-            Tuple[Image.Image, torch.Tensor, torch.Tensor]:
-                - Image from the dataset.
-                    Shape: [3, 224, 224].
-                - Multiple-hot target category vector for each instance.
-                    Shape: [num_instances, num_categories].
-                - Instance mask for each instance.
-                    Shape: [num_instances, 1, mask_width, mask_height].
-        """
-        # Get the instance annotations from the dataset. An instance annotation
-        # is a dictionary that contains (among others) the following entries:
-        # - "image_id": the id of the image that contains the instance.
-        # - "category_id": the id of the category that the instance belongs to.
-        anns = self.coco.loadAnns(self.coco.getAnnIds(self.ids[index]))
-
-        # Get the image and apply augmentations.
-        path = self.coco.loadImgs(self.ids[index])[0]["file_name"]
-        img = Image.open(os.path.join(self.root, path)).convert("RGB")
-        if self.transform is not None:
-            img = self.transform(img)
-            
-        # Create a multiple-hot target vector for each instance.
-        targets = torch.stack([self.cat_mappings["idtov"][ann["category_id"]]
-                            for ann in anns]) # [num_instances, num_categories]
-        # Load the segmentation mask for each instance.
-        masks = torch.stack([self.mask_transform(self.coco.annToMask(ann))
-                            for ann in anns]) # [num_instances, 1, mask_width, mask_height]
-
-        # if len(anns) > 0:
-        #     # Create a multiple-hot target vector for each instance.
-        #     targets = torch.stack([self.cat_mappings["idtov"][ann["category_id"]]
-        #                        for ann in anns]) # [num_instances, num_categories]
-        #     # Load the segmentation mask for each instance.
-        #     masks = torch.stack([self.mask_transform(self.coco.annToMask(ann))
-        #                      for ann in anns]) # [num_instances, 1, mask_width, mask_height]
-        # else:
-        #     # If there are no instances in the image, return empty tensors.
-        #     targets = torch.zeros((0, len(self.cat_mappings["itos"]))) # [0, num_categories]
-        #     masks = torch.zeros((0, 1, self.mask_width, self.mask_height)) # [0, 1, mask_width, mask_height]
-
-        return img, targets, masks
-
-
-class CocoInstances(_CocoAbstract):
-    """Coco dataset that returns instances."""
-
+    
     def __init__(self, root: str, annFile: str, cat_mappings_file: str,
                  transform: Optional[Callable],
                  mask_width: int = 7,
@@ -362,9 +327,96 @@ class CocoInstances(_CocoAbstract):
             mask_height (int, optional): Height that the segmentation mask
                 should be resized to. Defaults to 7.
         """
+        super().__init__(root, annFile, cat_mappings_file, transform, 
+                         mask_width, mask_height)
+
+        # Remove samples that don't have any annotations.
+        remove_ids = []
+        for index in range(len(self.ids)):
+            anns = self.coco.loadAnns(self.coco.getAnnIds(self.ids[index]))
+            if len(anns) == 0:
+                remove_ids.append(index)
+        self.ids = [self.ids[i] for i in range(len(self.ids)) 
+                    if i not in remove_ids]
+
+    def __getitem__(self, index: int) \
+            -> Tuple[Image.Image, torch.Tensor, torch.Tensor]:
+        """
+        Get a single image from the dataset, along with all its instances.
+        An "instance" refers to a specific occurrence of an object in an image.
+
+        Args:
+            index (int): Index of the image to be returned.
+
+        Returns:
+            Tuple[Image.Image, torch.Tensor, torch.Tensor]:
+                - Image from the dataset.
+                    Shape: [3, 224, 224].
+                - Multiple-hot target category vector for each instance.
+                    Shape: [num_instances].
+                - Instance mask for each instance.
+                    Shape: [num_instances, 1, mask_width, mask_height].
+        """
+        # Get the instance annotations from the dataset. An instance annotation
+        # is a dictionary that contains (among others) the following entries:
+        # - "image_id": the id of the image that contains the instance.
+        # - "category_id": the id of the category that the instance belongs to.
+        anns = self.coco.loadAnns(self.coco.getAnnIds(self.ids[index]))
+        
+        # Get the image and apply augmentations.
+        path = self.coco.loadImgs(self.ids[index])[0]["file_name"]
+        img = Image.open(os.path.join(self.root, path)).convert("RGB")
+        if self.transform is not None:
+            img = self.transform(img)
+
+        # Create the target category vector and instance masks.
+        targets = []
+        masks = []
+        for ann in anns:
+            mask = self.mask_transform(self.coco.annToMask(ann))
+            tokens = self.coco.cats[ann["category_id"]]["name"].split()
+            glove_indices = [self.cat_mappings["stoi"][token] 
+                             for token in tokens]
+            for glove_idx in glove_indices:
+                # Add the GloVe index to the list of targets.
+                targets.append(glove_idx)
+                # Add the mask to the list of masks.
+                masks.append(mask)
+        targets = torch.tensor(targets)
+        masks = torch.stack(masks)
+
+        return img, targets, masks
+
+
+class CocoInstances(_CocoAbstract):
+    """Coco dataset that returns instances."""
+
+    def __init__(self, root: str, annFile: str, cat_mappings_file: str,
+                 transform: Optional[Callable],
+                 mask_width: int = 7,
+                 mask_height: int = 7):
+        """
+        Initialize an object which can load COCO images and annotations.
+
+        Args:
+            root (str): Root directory where Coco images were downloaded to.
+            annFile (str): Path to json file containing instance annotations.
+            cat_mappings_
+            transform (Optional[Callable]): Transform to apply to the images.
+            mask_width (int, optional): Width that the segmentation mask should
+                be resized to. Defaults to 7.
+            mask_height (int, optional): Height that the segmentation mask
+                should be resized to. Defaults to 7.
+        """
         super().__init__(root, annFile, cat_mappings_file, transform,
                          mask_width, mask_height)
         self.ids = sorted(self.coco.anns.keys())
+
+        # Define a dict that maps a GloVe index to the index in the 
+        # multiple-hot vector that we construct in __getitem__.
+        self.glove_idx_to_idx_in_vector = {}
+        for i, glove_idx in enumerate(self.cat_mappings["itos"].keys()):
+            self.glove_idx_to_idx_in_vector[glove_idx] = i
 
     def __getitem__(self, index: int) \
             -> Tuple[Image.Image, torch.Tensor, torch.Tensor]:
@@ -397,7 +449,12 @@ class CocoInstances(_CocoAbstract):
             img = self.transform(img)
 
         # Create a multiple-hot target vector for the instance.
-        target = self.cat_mappings["idtov"][ann["category_id"]]
+        target = torch.zeros((len(self.cat_mappings["itos"]),))
+        tokens = self.coco.cats[ann["category_id"]]["name"].split()
+        for token in tokens:
+            glove_idx = self.cat_mappings["stoi"][token]
+            idx_in_vector = self.glove_idx_to_idx_in_vector[glove_idx]
+            target[idx_in_vector] = 1
 
         # Load the segmentation mask for the instance.
         mask = self.mask_transform(self.coco.annToMask(ann))

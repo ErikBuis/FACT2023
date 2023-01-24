@@ -277,7 +277,7 @@ def inference(args: argparse.Namespace,
 
         # Create a new dataloader that only contains the p images that
         # activated the target filter the most.
-        dataset_u = Subset(dataloader.dataset, max_imgs_sorted_u)
+        dataset_u = Subset(dataloader.dataset, max_imgs_sorted_u) # type: ignore
         dataloader_u = DataLoader(dataset_u, batch_size=args.batch_size,
                                   shuffle=False, num_workers=args.num_workers)
 
@@ -287,7 +287,7 @@ def inference(args: argparse.Namespace,
 
         # Iterate over the p images that activated the target filter the
         # most. Use batches for efficiency.
-        for batch_idx, (imgs, targets, masks) in enumerate(tqdm(dataloader_u)):
+        for batch_idx, (imgs, targets, masks) in enumerate(dataloader_u):
             # Move batch data to GPU.
             imgs = imgs.cuda().detach()
             targets, masks = targets.cuda().detach(), masks.cuda().detach()
@@ -314,7 +314,7 @@ def inference(args: argparse.Namespace,
 
             # Explain the filters with the batch of images.
             preds = explain(args.method, model, imgs, acts, acts_u,
-                            acts_u_resized, thresholds_act_masking[u])
+                            acts_u_resized, thresholds_act_masking[u]) # type: ignore
 
             # Compute the cosine similarity between each prediction and
             # each ground-truth word embedding. Then sort the results
@@ -327,7 +327,7 @@ def inference(args: argparse.Namespace,
                 dim=1,
                 descending=True
             )[:, :args.s]
-
+            
             # Repeat the `s` word predictions if the image that created
             # them caused high activations in our target filter to occur.
             # The assumption is that these images are more relevant to
@@ -354,18 +354,32 @@ def inference(args: argparse.Namespace,
                                                acts_u_resized[img_idx]))
 
                 # Compute IoU between the heatmap and the mask.
-                W_u_i = word_preds_per_img[img_idx]
+                W_u_i = [glove_idx.item()
+                         for glove_idx in word_preds_per_img[img_idx]]
                 R_x = acts_u_resized[img_idx] > thresholds_act_masking[u]
 
                 masks_img_resized = F.interpolate(masks[img_idx],
                                                   size=imgs.shape[-2:],
                                                   mode="nearest").bool()
                 targets_img = targets[img_idx]
+                
+                print("----------------------------------------")
+                print(f"Predicted words: {[glove.itos[idx] for idx in W_u_i]}")
+
                 G_u_i = []
                 for M_j, t_j in zip(masks_img_resized, targets_img):
                     IoU = (R_x & M_j).sum() / (R_x | M_j).sum()
                     if IoU > args.threshold_iou:
-                        G_u_i.append(t_j)
+                        G_u_i.append(t_j.item())
+                        print(f"Ground-truth word: {glove.itos[t_j.item()]}")
+                if len(G_u_i) == 0:
+                    continue
+                
+                print(f"{set(G_u_i)=}")
+                print(f"{set(W_u_i)=}")
+                result_g = set(G_u_i) & set(W_u_i)
+                print(f"Set: {result_g}")
+                print(f"Length of intersection: {len(result_g)}")
                 recall_u_i = len(set(G_u_i) & set(W_u_i)) / len(G_u_i)
                 recall += recall_u_i
 
@@ -374,10 +388,7 @@ def inference(args: argparse.Namespace,
         words = words[torch.argsort(counts, descending=True)[:args.num_tokens]]
 
         # Convert the word indices to word tokens.
-        with open(os.path.join(args.dir_data, "entities.txt"), "r") as f:
-            entities = [line.strip() for line in f if line != "\n"]
-        tokens = [glove.itos[word] for word in words
-                  if glove.itos[word] in entities]
+        tokens = [glove.itos[word] for word in words]
         table.append([u] + tokens + ["-"] * (len(headers) - len(tokens) - 1))
 
         # Visualize the activation heatmaps and save them to disk.
@@ -445,7 +456,7 @@ def main(args: argparse.Namespace):
         if path_wandb_id_file.exists():
             resume_id = path_wandb_id_file.read_text()
             wandb.init(project="temporal_scale", resume=resume_id,
-                       name=args.name, config=args)
+                       name=args.name, config=args) # type: ignore
         else:
             print("Creating new wandb instance...", path_wandb_id_file)
             run = wandb.init(project="temporal_scale",
@@ -463,7 +474,8 @@ def main(args: argparse.Namespace):
         root = os.path.join(args.dir_data, "vg")
         dataset = VisualGenomeImages(
             root=root,
-            transform=data_transforms["val"]
+            transform=data_transforms["val"],
+            glove=glove
         )
     elif args.refer == "coco":
         # Set up COCO dataset.
@@ -471,8 +483,8 @@ def main(args: argparse.Namespace):
         dataset = CocoImages(
             root=os.path.join(root, "val2017"),
             annFile=os.path.join(root, "annotations/instances_val2017.json"),
-            cat_mappings_file=os.path.join(root, "coco_label_embedding.pth"),
-            transform=data_transforms["val"]
+            cat_mappings_file=os.path.join(root, "cat_mappings.pkl"),
+            transform=data_transforms["val"],
         )
     else:
         raise NotImplementedError(f"Reference dataset '{args.refer}' "

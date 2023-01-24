@@ -8,6 +8,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import wandb
+from dadapt_adam import DAdaptAdam
 from image_datasets import (CocoInstances, VisualGenomeInstances,
                             data_transforms)
 from model_loader import forward_Exp, forward_Feat, setup_explainer
@@ -310,13 +311,13 @@ def main(args: argparse.Namespace):
         datasets["train"] = CocoInstances(
             root=os.path.join(root, "train2017"),
             annFile=os.path.join(root, "annotations/instances_train2017.json"),
-            cat_mappings_file=os.path.join(root, "coco_label_embedding.pth"),
+            cat_mappings_file=os.path.join(root, "cat_mappings.pkl"),
             transform=data_transforms["train"]
         )
         datasets["val"] = CocoInstances(
             root=os.path.join(root, "val2017"),
             annFile=os.path.join(root, "annotations/instances_val2017.json"),
-            cat_mappings_file=os.path.join(root, "coco_label_embedding.pth"),
+            cat_mappings_file=os.path.join(root, "cat_mappings.pkl"),
             transform=data_transforms["val"]
         )
         label_indices = list(datasets["train"].cat_mappings["itos"].keys())
@@ -347,8 +348,9 @@ def main(args: argparse.Namespace):
     model = model.cuda()
 
     # Set up optimizer, scheduler and loss function.
-    optimizer = torch.optim.Adam(model.fc.parameters(), lr=1e-4)
-    scheduler = ReduceLROnPlateau(optimizer, verbose=True)
+    optimizer = DAdaptAdam(model.parameters())
+    # optimizer = torch.optim.Adam(model.fc.parameters(), lr=1e-3)
+    # scheduler = ReduceLROnPlateau(optimizer, verbose=True)
     loss_fn = CSMRLoss(margin=args.margin)
 
     # Print confirmation message.
@@ -396,7 +398,7 @@ def main(args: argparse.Namespace):
             # Save train and validation accuracy.
             accs_train.append(acc_train)
             accs_valid.append(acc_valid)
-            scheduler.step(loss_valid)
+            # scheduler.step(loss_valid)
             f.write("epoch: %d\n" % epoch)
             f.write("train loss: %f\n" % loss_train)
             f.write("train accuracy: %f\n" % acc_train)
