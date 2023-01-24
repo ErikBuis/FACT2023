@@ -454,7 +454,7 @@ if __name__ == "__main__":
                         help="Experiment name")
     parser.add_argument("--num-workers", type=int, default=16,
                         help="Number of subprocesses to use for data loading")
-    parser.add_argument("--path-model", type=Optional[str], default=None,
+    parser.add_argument("--path-model", type=str, default=None,
                         help="Path to trained explainer model")
     parser.add_argument("--random", action="store_true",
                         help="Use a randomly initialized target model instead "

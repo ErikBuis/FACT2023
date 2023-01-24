@@ -263,7 +263,10 @@ class _CocoAbstract(CocoDetection):
         from pycocotools.coco import COCO
         self.coco = COCO(annFile)
         self.ids = sorted(self.coco.imgs.keys())
+        print(f"Loaded {len(self.ids)} images from {annFile}")
         self.mask_transform = create_mask_transform(mask_width, mask_height)
+        self.mask_width = mask_width
+        self.mask_height = mask_height
 
         # Load the categories. `self.cat_mappings` is a dictionary that
         # contains the following entries:
@@ -283,7 +286,6 @@ class _CocoAbstract(CocoDetection):
             for index in indices:
                 idx_in_vector = list(self.cat_mappings["itos"]).index(index)
                 self.cat_mappings["idtov"][category_id][idx_in_vector] = 1
-
 
 class CocoImages(_CocoAbstract):
     """Coco dataset that returns images."""
@@ -317,15 +319,25 @@ class CocoImages(_CocoAbstract):
         img = Image.open(os.path.join(self.root, path)).convert("RGB")
         if self.transform is not None:
             img = self.transform(img)
-
-        # TODO: This doesn't work for images with no instances.
+            
         # Create a multiple-hot target vector for each instance.
         targets = torch.stack([self.cat_mappings["idtov"][ann["category_id"]]
-                               for ann in anns])
-
+                            for ann in anns]) # [num_instances, num_categories]
         # Load the segmentation mask for each instance.
         masks = torch.stack([self.mask_transform(self.coco.annToMask(ann))
-                             for ann in anns])
+                            for ann in anns]) # [num_instances, 1, mask_width, mask_height]
+
+        # if len(anns) > 0:
+        #     # Create a multiple-hot target vector for each instance.
+        #     targets = torch.stack([self.cat_mappings["idtov"][ann["category_id"]]
+        #                        for ann in anns]) # [num_instances, num_categories]
+        #     # Load the segmentation mask for each instance.
+        #     masks = torch.stack([self.mask_transform(self.coco.annToMask(ann))
+        #                      for ann in anns]) # [num_instances, 1, mask_width, mask_height]
+        # else:
+        #     # If there are no instances in the image, return empty tensors.
+        #     targets = torch.zeros((0, len(self.cat_mappings["itos"]))) # [0, num_categories]
+        #     masks = torch.zeros((0, 1, self.mask_width, self.mask_height)) # [0, 1, mask_width, mask_height]
 
         return img, targets, masks
 
