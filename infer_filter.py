@@ -270,6 +270,7 @@ def inference(args: argparse.Namespace,
 
     # Initialize the recall.
     recall = 0
+    recall_terms = 0
 
     # Loop over all target filters to explain each one.
     for u, max_imgs_sorted_u in max_imgs_sorted.items():
@@ -277,7 +278,7 @@ def inference(args: argparse.Namespace,
 
         # Create a new dataloader that only contains the p images that
         # activated the target filter the most.
-        dataset_u = Subset(dataloader.dataset, max_imgs_sorted_u) # type: ignore
+        dataset_u = Subset(dataloader.dataset, max_imgs_sorted_u)
         dataloader_u = DataLoader(dataset_u, batch_size=args.batch_size,
                                   shuffle=False, num_workers=args.num_workers)
 
@@ -314,7 +315,7 @@ def inference(args: argparse.Namespace,
 
             # Explain the filters with the batch of images.
             preds = explain(args.method, model, imgs, acts, acts_u,
-                            acts_u_resized, thresholds_act_masking[u]) # type: ignore
+                            acts_u_resized, thresholds_act_masking[u])
 
             # Compute the cosine similarity between each prediction and
             # each ground-truth word embedding. Then sort the results
@@ -327,7 +328,7 @@ def inference(args: argparse.Namespace,
                 dim=1,
                 descending=True
             )[:, :args.s]
-            
+
             # Repeat the `s` word predictions if the image that created
             # them caused high activations in our target filter to occur.
             # The assumption is that these images are more relevant to
@@ -362,7 +363,7 @@ def inference(args: argparse.Namespace,
                                                   size=imgs.shape[-2:],
                                                   mode="nearest").bool()
                 targets_img = targets[img_idx]
-                
+
                 print("----------------------------------------")
                 print(f"Predicted words: {[glove.itos[idx] for idx in W_u_i]}")
 
@@ -374,7 +375,7 @@ def inference(args: argparse.Namespace,
                         print(f"Ground-truth word: {glove.itos[t_j.item()]}")
                 if len(G_u_i) == 0:
                     continue
-                
+
                 print(f"{set(G_u_i)=}")
                 print(f"{set(W_u_i)=}")
                 result_g = set(G_u_i) & set(W_u_i)
@@ -382,6 +383,7 @@ def inference(args: argparse.Namespace,
                 print(f"Length of intersection: {len(result_g)}")
                 recall_u_i = len(set(G_u_i) & set(W_u_i)) / len(G_u_i)
                 recall += recall_u_i
+                recall_terms += 1
 
         # Sort the predicteded words by their frequencies.
         words, counts = torch.unique(word_preds, return_counts=True)
@@ -416,7 +418,7 @@ def inference(args: argparse.Namespace,
         wandb.log({f"Top-{args.num_tokens} filter explanations": table})
 
     # Compute the average recall.
-    recall /= args.p * len(args.u)
+    recall /= recall_terms
     print(f"Average recall: {recall}")
 
 
@@ -456,7 +458,7 @@ def main(args: argparse.Namespace):
         if path_wandb_id_file.exists():
             resume_id = path_wandb_id_file.read_text()
             wandb.init(project="temporal_scale", resume=resume_id,
-                       name=args.name, config=args) # type: ignore
+                       name=args.name, config=args)
         else:
             print("Creating new wandb instance...", path_wandb_id_file)
             run = wandb.init(project="temporal_scale",
@@ -474,15 +476,16 @@ def main(args: argparse.Namespace):
         root = os.path.join(args.dir_data, "vg")
         dataset = VisualGenomeImages(
             root=root,
-            transform=data_transforms["val"],
-            glove=glove
+            objs_file=os.path.join(root, "vg_objects_preprocessed.json"),
+            cat_mappings_file=os.path.join(root, "cat_mappings.pkl"),
+            transform=data_transforms["val"]
         )
     elif args.refer == "coco":
         # Set up COCO dataset.
         root = os.path.join(args.dir_data, "coco")
         dataset = CocoImages(
             root=os.path.join(root, "val2017"),
-            annFile=os.path.join(root, "annotations/instances_val2017.json"),
+            ann_file=os.path.join(root, "annotations/instances_val2017.json"),
             cat_mappings_file=os.path.join(root, "cat_mappings.pkl"),
             transform=data_transforms["val"],
         )

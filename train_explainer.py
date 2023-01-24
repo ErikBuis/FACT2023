@@ -290,6 +290,8 @@ def main(args: argparse.Namespace):
         root = os.path.join(args.dir_data, "vg")
         dataset = VisualGenomeInstances(
             root=root,
+            objs_file=os.path.join(root, "vg_objects_preprocessed.json"),
+            cat_mappings_file=os.path.join(root, "cat_mappings.pkl"),
             transform=data_transforms["val"]
         )
         train_size = int(len(dataset) * args.train_rate)
@@ -297,8 +299,7 @@ def main(args: argparse.Namespace):
         datasets = {}
         datasets["train"], datasets["val"] = \
             random_split(dataset, [train_size, test_size])
-        label_indices = [glove.stoi[label]
-                         for label in dataset.labels]
+        label_indices = list(dataset.cat_mappings["stoi"].values())
         embeddings = glove.vectors[label_indices].T.cuda()
         train_label_indices = np.random.choice(
             range(len(label_indices)),
@@ -310,17 +311,19 @@ def main(args: argparse.Namespace):
         datasets = {}
         datasets["train"] = CocoInstances(
             root=os.path.join(root, "train2017"),
-            annFile=os.path.join(root, "annotations/instances_train2017.json"),
+            ann_file=os.path.join(root,
+                                  "annotations/instances_train2017.json"),
             cat_mappings_file=os.path.join(root, "cat_mappings.pkl"),
             transform=data_transforms["train"]
         )
         datasets["val"] = CocoInstances(
             root=os.path.join(root, "val2017"),
-            annFile=os.path.join(root, "annotations/instances_val2017.json"),
+            ann_file=os.path.join(root,
+                                  "annotations/instances_val2017.json"),
             cat_mappings_file=os.path.join(root, "cat_mappings.pkl"),
             transform=data_transforms["val"]
         )
-        label_indices = list(datasets["train"].cat_mappings["itos"].keys())
+        label_indices = list(datasets["train"].cat_mappings["stoi"].values())
         embeddings = glove.vectors[label_indices].T.cuda()
         train_label_indices = None
     else:

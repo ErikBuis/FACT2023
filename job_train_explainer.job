@@ -17,4 +17,14 @@ cd $HOME/FACT2023
 
 source activate fact2023
 
-srun python -u train_explainer.py --model resnet50 --epochs 1 --num-workers 4 --name resnet50-layer4-imagenet-vg --refer vg
+# Set the training parameters here.
+model=resnet18
+dataset_refer=vg
+dataset_target=imagenet
+layer_target=layer4
+epochs=1
+batch_size=512
+num_workers=4
+
+# Train the explainer.
+srun python -u train_explainer.py --model "$model" --layer-target "$layer_target" --refer "$dataset_refer" --name "$model"-"$layer_target"-"$dataset_target"-"$dataset_refer" --epochs "$epochs" --num-workers "$num_workers" --batch-size "$batch_size"

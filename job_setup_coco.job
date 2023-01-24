@@ -1,0 +1,46 @@
+#!/bin/bash
+
+#SBATCH --partition=gpu_titanrtx_shared_course
+#SBATCH --gres=gpu:0
+#SBATCH --job-name=SetupCOCO
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=3
+#SBATCH --time=0:45:00
+#SBATCH --mem=32000M
+#SBATCH --output=slurm_setup_coco_%A.out
+
+module purge
+module load 2021
+module load Anaconda3/2021.05
+
+cd $HOME/FACT2023
+
+source activate fact2023
+
+# This script is used to download the COCO dataset and extract the
+# images and annotations.
+
+# Download the COCO dataset.
+echo "Downloading the COCO dataset..."
+TODO
+
+# Extract the images.
+echo "Extracting the images..."
+TODO
+
+# Remove the empty folders and zip files.
+TODO
+
+# Download the annotations.
+echo "Downloading the annotations..."
+TODO
+
+# Extract the annotations.
+TODO
+
+# Remove the zip file.
+TODO
+
+# Run the script to create the dataset.
+echo "Creating the dataset..."
+srun python -u ./data/vg/preprocess_coco.py

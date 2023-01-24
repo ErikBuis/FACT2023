@@ -9,6 +9,8 @@
 [COCO API README](https://github.com/cocodataset/cocoapi) and
 [here](data/README.md) to download and setup the COCO data.
 
+// TODO Create a script that automatically downloads and preporocesses COCO.
+
 ### [Visual Genome (VG)](https://visualgenome.org/)
 
 Run the following script to download and preprocess the VG data.

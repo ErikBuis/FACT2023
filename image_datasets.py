@@ -6,8 +6,8 @@ from typing import Callable, Optional, Tuple
 import torch
 import torchvision.transforms as transforms
 from PIL import Image
+from pycocotools.coco import COCO
 from torch.utils.data import Dataset
-from torchtext.vocab import GloVe
 from torchvision.transforms.functional import InterpolationMode
 
 # Define the ImageNet normalization parameters.
@@ -62,8 +62,7 @@ def create_mask_transform(mask_width: int, mask_height: int) \
 class _VisualGenomeAbstract(Dataset):
     """Abstract class for the Visual Genome dataset."""
 
-    def __init__(self,
-                 root: str,
+    def __init__(self, root: str, objs_file: str, cat_mappings_file: str,
                  transform: Optional[Callable],
                  mask_width: int = 7,
                  mask_height: int = 7):
@@ -72,6 +71,10 @@ class _VisualGenomeAbstract(Dataset):
 
         Args:
             root (str): The root directory where VG images were downloaded to.
+            objs_file (str): Path to the json file containing the preprocessed
+                object data.
+            cat_mappings_file (str): Path to the pickle file containing the
+                category mappings.
             transform (Optional[Callable]): Transform to apply to the images.
             mask_width (int, optional): Width that the segmentation mask should
                 be resized to. Defaults to 7.
@@ -80,39 +83,25 @@ class _VisualGenomeAbstract(Dataset):
         """
         self.root = root
         self.transform = transform
-        self.samples = self._load_samples()
-        self.labels = self._load_labels()
         self.mask_transform = create_mask_transform(mask_width, mask_height)
+        with open(objs_file) as f:
+            self.samples = json.load(f)
 
-    def _load_samples(self) -> list[dict[str, list[dict[str, int]]]]:
-        """Load the object data from the json file."""
-        print("Loading object data...", end=" ")
-        path = os.path.join(self.root, "vg_objects_preprocessed.json")
-        if not os.path.exists(path):
-            raise FileNotFoundError(f"{path} not found. "
-                                    "Please run `preprocess.py` first.")
-        with open(path) as f:
-            samples = json.load(f)
-        print("Done.")
-        return samples
-
-    def _load_labels(self) -> dict[str, int]:
-        """Load the labels from the pickle file."""
-        print("Loading labels...", end=" ")
-        path = os.path.join(self.root, "vg_labels.pkl")
-        with open(path, "rb") as f:
-            labels = pickle.load(f)
-        print("Done.")
-        return labels
+        # Load the categories. `self.cat_mappings` is a dictionary that
+        # contains the following entries:
+        # - "stoi" (String TO Index): a dictionary that maps a VG category
+        #   token to its GloVe index in the embedding matrix.
+        # - "itos" (Index TO String): a dictionary that maps a GloVe index in
+        #   the embedding matrix to its VG category token.
+        with open(cat_mappings_file, "rb") as f:
+            self.cat_mappings = pickle.load(f)
 
 
 class VisualGenomeImages(_VisualGenomeAbstract):
     """Visual Genome dataset that returns images."""
-    
-    def __init__(self,
-                 root: str,
+
+    def __init__(self, root: str, objs_file: str, cat_mappings_file: str,
                  transform: Optional[Callable],
-                 glove: GloVe,
                  mask_width: int = 7,
                  mask_height: int = 7):
         """
@@ -120,31 +109,30 @@ class VisualGenomeImages(_VisualGenomeAbstract):
 
         Args:
             root (str): The root directory where VG images were downloaded to.
+            objs_file (str): Path to the json file containing the preprocessed
+                object data.
+            cat_mappings_file (str): Path to the pickle file containing the
+                category mappings.
             transform (Optional[Callable]): Transform to apply to the images.
-            glove (Glove): GloVe word embeddings.
             mask_width (int, optional): Width that the segmentation mask should
                 be resized to. Defaults to 7.
             mask_height (int, optional): Height that the segmentation mask
                 should be resized to. Defaults to 7.
         """
-        super().__init__(root, transform, mask_width, mask_height)
-        self.glove = glove
-        
-        # Remove samples that don't have any labels in self.labels.
-        remove_indices = []
-        for sample_id, sample in enumerate(self.samples):
-            if not any(label in self.labels 
-                       for label in sample["objects"].keys()):
-                remove_indices.append(sample_id)
-        self.samples = [sample for i, sample in enumerate(self.samples)
-                        if i not in remove_indices]
+        super().__init__(root, objs_file, cat_mappings_file,
+                         transform, mask_width, mask_height)
+
+        # Remove samples that don't have any categories.
+        self.samples = [sample for sample in self.samples
+                        if all(cat_token in self.cat_mappings["stoi"].keys()
+                               for cat_token in sample["objects"].keys())]
 
     def __len__(self) -> int:
         """Get the amount of images in the VG dataset."""
         return len(self.samples)
 
-    def __getitem__(self, idx: int) \
-            -> Tuple[Image.Image, torch.Tensor, torch.Tensor]:
+    def __getitem__(self, index: int) \
+            -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Get a single image from the dataset, along with all its instances.
         An "instance" refers to a specific occurrence of an object in an image.
@@ -156,35 +144,31 @@ class VisualGenomeImages(_VisualGenomeAbstract):
             Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
                 - Image from the dataset.
                     Shape: [3, 224, 224]
-                - One-hot target category vector for each instance.
+                - GloVe category index for each instance.
                     Shape: [num_instances]
-                - Instance mask for each instance.
+                - Mask for each instance.
                     Shape: [num_instances, 1, mask_width, mask_height]
         """
-        sample_id = idx
-
         # Get the image and apply augmentations.
-        path = f"VG_100K/{self.samples[sample_id]['image_id']}.jpg"
+        path = f"VG_100K/{self.samples[index]['image_id']}.jpg"
         img_og = Image.open(os.path.join(self.root, path)).convert("RGB")
         img = self.transform(img_og) if self.transform is not None else img_og
 
+        # Create the target category vector and instance masks.
         targets = []
         masks = []
-        for label, bboxes in self.samples[sample_id]["objects"].items():
-            if label not in self.labels:
+        for cat_token, bboxes in self.samples[index]["objects"].items():
+            if cat_token not in self.cat_mappings["stoi"].keys():
                 continue
             for bbox in bboxes:
-                # Get the glove index that corresponds to this label.
-                targets.append(self.glove.stoi[label])
-
-                # Load the segmentation mask for each instance.
-                mask = torch.zeros(img_og.size)
+                # Add the GloVe index to the list of targets.
+                targets.append(self.cat_mappings["stoi"][cat_token])
+                # Add the mask to the list of masks.
+                mask = torch.zeros(img.shape)
                 mask[bbox["y"]:bbox["y"] + bbox["h"],
                      bbox["x"]:bbox["x"] + bbox["w"]] = 1
-                mask = self.mask_transform(mask)
-                masks.append(mask)
-
-        targets = torch.stack(targets)
+                masks.append(self.mask_transform(mask))
+        targets = torch.tensor(targets)
         masks = torch.stack(masks)
 
         return img, targets, masks
@@ -193,8 +177,7 @@ class VisualGenomeImages(_VisualGenomeAbstract):
 class VisualGenomeInstances(_VisualGenomeAbstract):
     """Visual Genome dataset that returns instances."""
 
-    def __init__(self,
-                 root: str,
+    def __init__(self, root: str, objs_file: str, cat_mappings_file: str,
                  transform: Optional[Callable],
                  mask_width: int = 7,
                  mask_height: int = 7):
@@ -203,29 +186,40 @@ class VisualGenomeInstances(_VisualGenomeAbstract):
 
         Args:
             root (str): The root directory where VG images were downloaded to.
+            objs_file (str): Path to the json file containing the preprocessed
+                object data.
+            cat_mappings_file (str): Path to the pickle file containing the
+                category mappings.
             transform (Optional[Callable]): Transform to apply to the images.
             mask_width (int, optional): Width that the segmentation mask should
                 be resized to. Defaults to 7.
             mask_height (int, optional): Height that the segmentation mask
                 should be resized to. Defaults to 7.
         """
-        super().__init__(root, transform, mask_width, mask_height)
+        super().__init__(root, objs_file, cat_mappings_file,
+                         transform, mask_width, mask_height)
 
         # Create a mapping from instances to bboxes.
-        self._instance_to_bbox = []
-        for sample_id, sample in enumerate(self.samples):
-            for label, bboxes in sample["objects"].items():
-                if label not in self.labels:
+        self.instance2idx = []
+        for sample_idx, sample in enumerate(self.samples):
+            for cat_token, bboxes in sample["objects"].items():
+                if cat_token not in self.cat_mappings["stoi"].keys():
                     continue
-                for bbox_id in range(len(bboxes)):
-                    self._instance_to_bbox.append((sample_id, label, bbox_id))
+                for bbox_idx in range(len(bboxes)):
+                    self.instance2idx.append((sample_idx, cat_token, bbox_idx))
+
+        # Define a dict that maps a GloVe index to its index in the
+        # multiple-hot target vectors.
+        self.glove2vec_idx = {}
+        for i, glove_idx in enumerate(self.cat_mappings["stoi"].values()):
+            self.glove2vec_idx[glove_idx] = i
 
     def __len__(self) -> int:
         """Get the amount of instances in the VG dataset."""
-        return len(self._instance_to_bbox)
+        return len(self.instance2idx)
 
-    def __getitem__(self, idx: int) \
-            -> Tuple[Image.Image, torch.Tensor, torch.Tensor]:
+    def __getitem__(self, index: int) \
+            -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Get a single instance from the dataset.
         An "instance" refers to a specific occurrence of an object in an image.
@@ -242,20 +236,21 @@ class VisualGenomeInstances(_VisualGenomeAbstract):
                 - Instance mask.
                     Shape: [1, mask_width, mask_height]
         """
-        sample_id, label, bbox_id = self._instance_to_bbox[idx]
+        sample_idx, cat_token, bbox_idx = self.instance2idx[index]
 
         # Get the image and apply augmentations.
-        path = f"VG_100K/{self.samples[sample_id]['image_id']}.jpg"
+        path = f"VG_100K/{self.samples[sample_idx]['image_id']}.jpg"
         img_og = Image.open(os.path.join(self.root, path)).convert("RGB")
         img = self.transform(img_og) if self.transform is not None else img_og
 
         # Create a one-hot target vector for the instance.
-        target = torch.zeros((len(self.labels),))
-        target[self.labels[label]] = 1
+        target = torch.zeros((len(self.cat_mappings["stoi"]),))
+        glove_idx = self.cat_mappings["stoi"][cat_token]
+        target[self.glove2vec_idx[glove_idx]] = 1
 
         # Load the segmentation mask for the instance.
-        bbox = self.samples[sample_id]["objects"][label][bbox_id]
-        mask = torch.zeros(img_og.size)
+        bbox = self.samples[sample_idx]["objects"][cat_token][bbox_idx]
+        mask = torch.zeros(img.shape)
         mask[bbox["y"]:bbox["y"] + bbox["h"],
              bbox["x"]:bbox["x"] + bbox["w"]] = 1
         mask = self.mask_transform(mask)
@@ -266,7 +261,7 @@ class VisualGenomeInstances(_VisualGenomeAbstract):
 class _CocoAbstract(Dataset):
     """Abstract class for the COCO dataset."""
 
-    def __init__(self, root: str, annFile: str, cat_mappings_file: str,
+    def __init__(self, root: str, ann_file: str, cat_mappings_file: str,
                  transform: Optional[Callable],
                  mask_width: int = 7,
                  mask_height: int = 7):
@@ -274,9 +269,10 @@ class _CocoAbstract(Dataset):
         Initialize an object which can load COCO images and annotations.
 
         Args:
-            root (str): Root directory where Coco images were downloaded to.
-            annFile (str): Path to json file containing instance annotations.
-            cat_mappings_file (str): Path to pickle file containing categories.
+            root (str): Root directory where COCO images were downloaded to.
+            ann_file (str): Path to json file containing instance annotations.
+            cat_mappings_file (str): Path to the pickle file containing the
+                category mappings.
             transform (Optional[Callable]): Transform to apply to the images.
             mask_width (int, optional): Width that the segmentation mask should
                 be resized to. Defaults to 7.
@@ -284,9 +280,8 @@ class _CocoAbstract(Dataset):
                 should be resized to. Defaults to 7.
         """
         super().__init__()
-        from pycocotools.coco import COCO
         self.root = root
-        self.coco = COCO(annFile)
+        self.coco = COCO(ann_file)
         self.transform = transform
         self.ids = sorted(self.coco.imgs.keys())
         self.mask_transform = create_mask_transform(mask_width, mask_height)
@@ -295,9 +290,9 @@ class _CocoAbstract(Dataset):
 
         # Load the categories. `self.cat_mappings` is a dictionary that
         # contains the following entries:
-        # - "stoi" (String TO Index): a dictionary that maps a COCO category 
+        # - "stoi" (String TO Index): a dictionary that maps a COCO category
         #   token to its GloVe index in the embedding matrix.
-        # - "itos" (Index TO String): a dictionary that maps a GloVe index in 
+        # - "itos" (Index TO String): a dictionary that maps a GloVe index in
         #   the embedding matrix to its COCO category token.
         with open(cat_mappings_file, "rb") as f:
             self.cat_mappings = pickle.load(f)
@@ -308,9 +303,9 @@ class _CocoAbstract(Dataset):
 
 
 class CocoImages(_CocoAbstract):
-    """Coco dataset that returns images."""
-    
-    def __init__(self, root: str, annFile: str, cat_mappings_file: str,
+    """COCO dataset that returns images."""
+
+    def __init__(self, root: str, ann_file: str, cat_mappings_file: str,
                  transform: Optional[Callable],
                  mask_width: int = 7,
                  mask_height: int = 7):
@@ -318,8 +313,8 @@ class CocoImages(_CocoAbstract):
         Initialize an object which can load COCO images and annotations.
 
         Args:
-            root (str): Root directory where Coco images were downloaded to.
-            annFile (str): Path to json file containing instance annotations.
+            root (str): Root directory where COCO images were downloaded to.
+            ann_file (str): Path to json file containing instance annotations.
             cat_mappings_file (str): Path to pickle file containing categories.
             transform (Optional[Callable]): Transform to apply to the images.
             mask_width (int, optional): Width that the segmentation mask should
@@ -327,20 +322,15 @@ class CocoImages(_CocoAbstract):
             mask_height (int, optional): Height that the segmentation mask
                 should be resized to. Defaults to 7.
         """
-        super().__init__(root, annFile, cat_mappings_file, transform, 
-                         mask_width, mask_height)
+        super().__init__(root, ann_file, cat_mappings_file,
+                         transform, mask_width, mask_height)
 
         # Remove samples that don't have any annotations.
-        remove_ids = []
-        for index in range(len(self.ids)):
-            anns = self.coco.loadAnns(self.coco.getAnnIds(self.ids[index]))
-            if len(anns) == 0:
-                remove_ids.append(index)
-        self.ids = [self.ids[i] for i in range(len(self.ids)) 
-                    if i not in remove_ids]
+        self.ids = [image_id for image_id in self.ids
+                    if len(self.coco.getAnnIds(image_id)) > 0]
 
     def __getitem__(self, index: int) \
-            -> Tuple[Image.Image, torch.Tensor, torch.Tensor]:
+            -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Get a single image from the dataset, along with all its instances.
         An "instance" refers to a specific occurrence of an object in an image.
@@ -349,12 +339,12 @@ class CocoImages(_CocoAbstract):
             index (int): Index of the image to be returned.
 
         Returns:
-            Tuple[Image.Image, torch.Tensor, torch.Tensor]:
+            Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
                 - Image from the dataset.
                     Shape: [3, 224, 224].
-                - Multiple-hot target category vector for each instance.
+                - GloVe category index for each instance.
                     Shape: [num_instances].
-                - Instance mask for each instance.
+                - Mask for each instance.
                     Shape: [num_instances, 1, mask_width, mask_height].
         """
         # Get the instance annotations from the dataset. An instance annotation
@@ -362,21 +352,20 @@ class CocoImages(_CocoAbstract):
         # - "image_id": the id of the image that contains the instance.
         # - "category_id": the id of the category that the instance belongs to.
         anns = self.coco.loadAnns(self.coco.getAnnIds(self.ids[index]))
-        
+
         # Get the image and apply augmentations.
         path = self.coco.loadImgs(self.ids[index])[0]["file_name"]
-        img = Image.open(os.path.join(self.root, path)).convert("RGB")
-        if self.transform is not None:
-            img = self.transform(img)
+        img_og = Image.open(os.path.join(self.root, path)).convert("RGB")
+        img = self.transform(img_og) if self.transform is not None else img_og
 
         # Create the target category vector and instance masks.
         targets = []
         masks = []
         for ann in anns:
             mask = self.mask_transform(self.coco.annToMask(ann))
-            tokens = self.coco.cats[ann["category_id"]]["name"].split()
-            glove_indices = [self.cat_mappings["stoi"][token] 
-                             for token in tokens]
+            cat_tokens = self.coco.cats[ann["category_id"]]["name"].split()
+            glove_indices = [self.cat_mappings["stoi"][cat_token]
+                             for cat_token in cat_tokens]
             for glove_idx in glove_indices:
                 # Add the GloVe index to the list of targets.
                 targets.append(glove_idx)
@@ -389,9 +378,9 @@ class CocoImages(_CocoAbstract):
 
 
 class CocoInstances(_CocoAbstract):
-    """Coco dataset that returns instances."""
+    """COCO dataset that returns instances."""
 
-    def __init__(self, root: str, annFile: str, cat_mappings_file: str,
+    def __init__(self, root: str, ann_file: str, cat_mappings_file: str,
                  transform: Optional[Callable],
                  mask_width: int = 7,
                  mask_height: int = 7):
@@ -399,27 +388,27 @@ class CocoInstances(_CocoAbstract):
         Initialize an object which can load COCO images and annotations.
 
         Args:
-            root (str): Root directory where Coco images were downloaded to.
-            annFile (str): Path to json file containing instance annotations.
-            cat_mappings_
+            root (str): Root directory where COCO images were downloaded to.
+            ann_file (str): Path to json file containing instance annotations.
+            cat_mappings_file (str): Path to pickle file containing categories.
             transform (Optional[Callable]): Transform to apply to the images.
             mask_width (int, optional): Width that the segmentation mask should
                 be resized to. Defaults to 7.
             mask_height (int, optional): Height that the segmentation mask
                 should be resized to. Defaults to 7.
         """
-        super().__init__(root, annFile, cat_mappings_file, transform,
-                         mask_width, mask_height)
+        super().__init__(root, ann_file, cat_mappings_file,
+                         transform, mask_width, mask_height)
         self.ids = sorted(self.coco.anns.keys())
 
-        # Define a dict that maps a GloVe index to the index in the 
-        # multiple-hot vector that we construct in __getitem__.
-        self.glove_idx_to_idx_in_vector = {}
-        for i, glove_idx in enumerate(self.cat_mappings["itos"].keys()):
-            self.glove_idx_to_idx_in_vector[glove_idx] = i
+        # Define a dict that maps a GloVe index to its index in the
+        # multiple-hot target vectors.
+        self.glove2vec_idx = {}
+        for i, glove_idx in enumerate(self.cat_mappings["stoi"].values()):
+            self.glove2vec_idx[glove_idx] = i
 
     def __getitem__(self, index: int) \
-            -> Tuple[Image.Image, torch.Tensor, torch.Tensor]:
+            -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Get a single instance from the dataset.
         An "instance" refers to a specific occurrence of an object in an image.
@@ -428,7 +417,7 @@ class CocoInstances(_CocoAbstract):
             index (int): Index of the instance to be returned.
 
         Returns:
-            Tuple[Image.Image, torch.Tensor, torch.Tensor]:
+            Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
                 - Image in which the instance is found.
                     Shape: [3, 224, 224].
                 - Multiple-hot target category vector.
@@ -444,17 +433,15 @@ class CocoInstances(_CocoAbstract):
 
         # Get the image and apply augmentations.
         path = self.coco.loadImgs(ann["image_id"])[0]["file_name"]
-        img = Image.open(os.path.join(self.root, path)).convert("RGB")
-        if self.transform is not None:
-            img = self.transform(img)
+        img_og = Image.open(os.path.join(self.root, path)).convert("RGB")
+        img = self.transform(img_og) if self.transform is not None else img_og
 
         # Create a multiple-hot target vector for the instance.
-        target = torch.zeros((len(self.cat_mappings["itos"]),))
-        tokens = self.coco.cats[ann["category_id"]]["name"].split()
-        for token in tokens:
-            glove_idx = self.cat_mappings["stoi"][token]
-            idx_in_vector = self.glove_idx_to_idx_in_vector[glove_idx]
-            target[idx_in_vector] = 1
+        target = torch.zeros((len(self.cat_mappings["stoi"]),))
+        cat_tokens = self.coco.cats[ann["category_id"]]["name"].split()
+        for cat_token in cat_tokens:
+            glove_idx = self.cat_mappings["stoi"][cat_token]
+            target[self.glove2vec_idx[glove_idx]] = 1
 
         # Load the segmentation mask for the instance.
         mask = self.mask_transform(self.coco.annToMask(ann))
