@@ -17,3 +17,6 @@
 # Ignore the raw outputs of the training process.
 **/outputs
 **.out
+
+# Ignore wandb files.
+**/wandb
