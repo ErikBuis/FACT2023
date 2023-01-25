@@ -54,12 +54,17 @@ python3 infer_filter.py
 ```
 
 ### Examples
-For training an explainer to explain ResNet18's layer 4 using the COCO dataset, run:
+For training an explainer to explain ResNet18's layer 4 using the VG dataset, run:
 ```commandline
-python3 train_explainer.py --model resnet18 --layer-target layer4 --refer coco --epochs 10
+python3 train_explainer.py --model resnet18 --layer-target layer4 --layer-classifier fc --refer vg --epochs 10
 ```
-Note that each epoch takes around 30 minutes on a single A100 GPU, and around an hour on a Titan RTX GPU. The trained explainer will be saved to the `outputs` folder.
+Each epoch takes around 30 minutes on a single A100 GPU, and around an hour on a Titan RTX GPU. The trained explainer will be saved to the `outputs` folder.
 
+For training an explainer to explain AlexNet's feature layer using the COCO dataset, run:
+```commandline
+python3 train_explainer.py --model alexnet --layer-target features --layer-classifier classifier --refer coco --epochs 10
+```
+Each epoch takes around 30 minutes on a single A100 GPU, and around an hour on a Titan RTX GPU. The trained explainer will be saved to the `outputs` folder.
 
 # Citation of the original paper
 ```

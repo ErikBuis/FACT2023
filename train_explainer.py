@@ -80,8 +80,7 @@ def train_one_epoch(args: argparse.Namespace,
     # Iterate over the training set.
     for batch_idx, (imgs, targets, masks) in enumerate(train_loader):
         # Move batch data to GPU.
-        imgs = imgs.cuda()
-        targets, masks = targets.squeeze(0).cuda(), masks.squeeze(0).cuda()
+        imgs, targets, masks = imgs.cuda(), targets.cuda(), masks.cuda()
 
         # Forward pass.
         acts = forward_Feat(args, model, imgs)
@@ -197,8 +196,7 @@ def validate(args: argparse.Namespace,
     for imgs, targets, masks in valid_loader:
         with torch.no_grad():
             # Move batch data to GPU.
-            imgs = imgs.cuda()
-            targets, masks = targets.squeeze(0).cuda(), masks.squeeze(0).cuda()
+            imgs, targets, masks = imgs.cuda(), targets.cuda(), masks.cuda()
 
             # Forward pass.
             acts = forward_Feat(args, model, imgs)
@@ -283,6 +281,24 @@ def main(args: argparse.Namespace):
     glove = GloVe(name="6B", dim=args.word_embedding_dim)
     torch.cuda.empty_cache()
 
+    # Set up model.
+    model = setup_explainer(args, args.random)
+    if args.path_model is None:
+        args.path_model = os.path.join(args.dir_save, "ckpt_best.pth.tar")
+    if os.path.exists(args.path_model):
+        print(f"Loading model from '{args.path_model}'...", end=" ")
+        model.load_state_dict(torch.load(args.path_model)["state_dict"])
+        print("Done.")
+    else:
+        print(f"No model found at '{args.path_model}'. "
+              "Training from scratch.")
+    model = model.cuda()
+
+    # Calculate the mask size.
+    filter_width, filter_height = forward_Feat(
+        args, model, torch.zeros(1, 3, 224, 224).cuda()
+    ).shape[-2:]
+
     # Set up dataset.
     if args.refer == "vg":
         # Set up Visual Genome dataset.
@@ -291,7 +307,9 @@ def main(args: argparse.Namespace):
             root=root,
             objs_file=os.path.join(root, "vg_objects_preprocessed.json"),
             cat_mappings_file=os.path.join(root, "cat_mappings.pkl"),
-            transform=data_transforms["val"]
+            transform=data_transforms["val"],
+            filter_width=filter_width,
+            filter_height=filter_height
         )
         train_size = int(len(dataset) * args.train_rate)
         test_size = len(dataset) - train_size
@@ -313,14 +331,18 @@ def main(args: argparse.Namespace):
             ann_file=os.path.join(root,
                                   "annotations/instances_train2017.json"),
             cat_mappings_file=os.path.join(root, "cat_mappings.pkl"),
-            transform=data_transforms["train"]
+            transform=data_transforms["train"],
+            filter_width=filter_width,
+            filter_height=filter_height
         )
         datasets["val"] = CocoInstances(
             root=os.path.join(root, "val2017"),
             ann_file=os.path.join(root,
                                   "annotations/instances_val2017.json"),
             cat_mappings_file=os.path.join(root, "cat_mappings.pkl"),
-            transform=data_transforms["val"]
+            transform=data_transforms["val"],
+            filter_width=filter_width,
+            filter_height=filter_height
         )
         label_indices = list(datasets["train"].cat_mappings["stoi"].values())
         embeddings = glove.vectors[label_indices].T.cuda()
@@ -335,19 +357,6 @@ def main(args: argparse.Namespace):
                                  shuffle=True, num_workers=args.num_workers)
         for dataset_type, dataset in datasets.items()
     }
-
-    # Set up model.
-    model = setup_explainer(args, args.random)
-    if args.path_model is None:
-        args.path_model = os.path.join(args.dir_save, "ckpt_best.pth.tar")
-    if os.path.exists(args.path_model):
-        print(f"Loading model from '{args.path_model}'...", end=" ")
-        model.load_state_dict(torch.load(args.path_model)["state_dict"])
-        print("Done.")
-    else:
-        print(f"No model found at '{args.path_model}'. "
-              "Training from scratch.")
-    model = model.cuda()
 
     # Set up optimizer, scheduler and loss function.
     optimizer = DAdaptAdam(model.parameters())

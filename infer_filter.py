@@ -169,9 +169,9 @@ def explain(method: str, model: nn.Module, imgs: torch.Tensor,
         imgs (torch.Tensor): The batch of images to use in the explanation.
             Shape: [batch_size, 3, 224, 224].
         acts (torch.Tensor): The activations of all filters.
-            Shape: [batch_size, amount_filters, 7, 7].
+            Shape: [batch_size, amount_filters, filter_width, filter_height].
         acts_u (torch.Tensor): The activations of the target filter.
-            Shape: [batch_size, 1, 7, 7].
+            Shape: [batch_size, 1, filter_width, filter_height].
         acts_u_resized (torch.Tensor): The activations of the target filter,
             resized to the size of the image.
             Shape: [batch_size, 1, 224, 224].
@@ -291,8 +291,7 @@ def inference(args: argparse.Namespace,
         # most. Use batches for efficiency.
         for batch_idx, (imgs, targets, masks) in enumerate(dataloader_u):
             # Move batch data to GPU.
-            imgs = imgs.cuda().detach()
-            targets, masks = targets.cuda().detach(), masks.cuda().detach()
+            imgs, targets, masks = imgs.cuda(), targets.cuda(), masks.cuda()
 
             # Forward pass through feature extractor Feat().
             acts = forward_Feat(args, model, imgs)
@@ -477,6 +476,22 @@ def main(args: argparse.Namespace):
     glove = GloVe(name="6B", dim=args.word_embedding_dim)
     embeddings = glove.vectors.T.cuda()
 
+    # Set up model.
+    model = setup_explainer(args, args.random)
+    if args.path_model is None:
+        args.path_model = os.path.join(args.dir_save, "ckpt_best.pth.tar")
+    if not os.path.exists(args.path_model):
+        raise FileNotFoundError(f"No model found at '{args.path_model}'.")
+    print(f"Loading model from '{args.path_model}'...", end=" ")
+    model.load_state_dict(torch.load(args.path_model)["state_dict"])
+    model = model.cuda()
+    print("Done.")
+
+    # Calculate the mask size.
+    filter_width, filter_height = forward_Feat(
+        args, model, torch.zeros(1, 3, 224, 224).cuda()
+    ).shape[-2:]
+
     # Set up dataset.
     if args.refer == "vg":
         # Set up Visual Genome dataset.
@@ -485,7 +500,9 @@ def main(args: argparse.Namespace):
             root=root,
             objs_file=os.path.join(root, "vg_objects_preprocessed.json"),
             cat_mappings_file=os.path.join(root, "cat_mappings.pkl"),
-            transform=data_transforms["val"]
+            transform=data_transforms["val"],
+            filter_width=filter_width,
+            filter_height=filter_height
         )
     elif args.refer == "coco":
         # Set up COCO dataset.
@@ -495,6 +512,8 @@ def main(args: argparse.Namespace):
             ann_file=os.path.join(root, "annotations/instances_val2017.json"),
             cat_mappings_file=os.path.join(root, "cat_mappings.pkl"),
             transform=data_transforms["val"],
+            filter_width=filter_width,
+            filter_height=filter_height
         )
     else:
         raise NotImplementedError(f"Reference dataset '{args.refer}' "
@@ -503,18 +522,6 @@ def main(args: argparse.Namespace):
     # Set up dataloader.
     dataloader = DataLoader(dataset, batch_size=args.batch_size,
                             shuffle=False, num_workers=args.num_workers)
-
-    # Set up model.
-    model = setup_explainer(args, args.random)
-    if args.path_model is None:
-        args.path_model = os.path.join(args.dir_save, "ckpt_best.pth.tar")
-    if not os.path.exists(args.path_model):
-        raise FileNotFoundError(f"No model found at '{args.path_model}'.")
-
-    print(f"Loading model from '{args.path_model}'...", end=" ")
-    model.load_state_dict(torch.load(args.path_model)["state_dict"])
-    model = model.cuda()
-    print("Done.")
 
     # Print confirmation message.
     print()

@@ -48,26 +48,29 @@ def setup_explainer(args: argparse.Namespace,
         if not module_name.endswith("pool"):
             model._modules[module_name] = nn.Identity()
 
+    # Get the feature dimension of the classifier layer.
     if args.model.startswith("resnet"):
-        # Get the feature dimension of the classifier layer.
         feature_dim = model._modules[args.layer_classifier].in_features
-
-        # Replace the classifier layer with our Feature Explainer model.
-        model._modules[args.layer_classifier] = nn.Sequential(
-            nn.BatchNorm1d(feature_dim),
-            nn.Dropout(0.1),
-            nn.Linear(in_features=feature_dim,
-                      out_features=feature_dim,
-                      bias=True),
-            nn.ReLU(),
-            nn.BatchNorm1d(feature_dim),
-            nn.Dropout(0.1),
-            nn.Linear(in_features=feature_dim,
-                      out_features=args.word_embedding_dim,
-                      bias=True)
-        )
+    elif args.model.startswith("alexnet"):
+        feature_dim = model._modules[args.layer_classifier]._modules["1"] \
+            .in_features
     else:
         raise NotImplementedError(f"Model '{args.model}' is not supported.")
+
+    # Replace the classifier layer with our Feature Explainer model.
+    model._modules[args.layer_classifier] = nn.Sequential(
+        nn.BatchNorm1d(feature_dim),
+        nn.Dropout(0.1),
+        nn.Linear(in_features=feature_dim,
+                  out_features=feature_dim,
+                  bias=True),
+        nn.ReLU(),
+        nn.BatchNorm1d(feature_dim),
+        nn.Dropout(0.1),
+        nn.Linear(in_features=feature_dim,
+                  out_features=args.word_embedding_dim,
+                  bias=True)
+    )
 
     # Move the feature extracter model (Feat) and the explainer model (Exp),
     # which are now combined into `model`, to the GPU.
@@ -89,7 +92,7 @@ def forward_Feat(args: argparse.Namespace, model: nn.Module,
 
     Returns:
         torch.Tensor: Batch of filter activations.
-            Shape: [batch_size, amount_filters, 7, 7].
+            Shape: [batch_size, amount_filters, filter_width, filter_height].
     """
     for name, module in model._modules.items():
         imgs = module(imgs)
@@ -106,7 +109,7 @@ def forward_Exp(args: argparse.Namespace, model: nn.Module,
         args (argparse.Namespace): The command line arguments.
         model (nn.Module): Feat() + Exp() model.
         acts (torch.Tensor): Batch of filter activations.
-            Shape: [batch_size, amount_filters, 7, 7].
+            Shape: [batch_size, amount_filters, filter_width, filter_height].
 
     Returns:
         torch.Tensor: Batch of word embeddings.

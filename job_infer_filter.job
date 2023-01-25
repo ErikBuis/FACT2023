@@ -18,4 +18,4 @@ cd $HOME/FACT2023
 source activate fact2023
 
 # Perform inference on the filters.
-srun python -u infer_filter.py --model resnet18 --layer-target layer4 --refer vg --num-workers 4 --batch-size 1 --weigh-s-by-relevance
+srun python -u infer_filter.py --model resnet50 --layer-target layer4 --refer vg --num-workers 4 --batch-size 1 --weigh-s-by-relevance

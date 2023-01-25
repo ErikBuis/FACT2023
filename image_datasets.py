@@ -37,14 +37,14 @@ data_transforms = {
 }
 
 
-def create_mask_transform(mask_width: int, mask_height: int) \
+def create_mask_transform(filter_width: int, filter_height: int) \
         -> transforms.Compose:
     """
     Create a transform to resize a mask.
 
     Args:
-        mask_width (int): Width of the mask.
-        mask_height (int): Height of the mask.
+        filter_width (int): Width of the mask.
+        filter_height (int): Height of the mask.
 
     Returns:
         transforms.Compose: Mask transform.
@@ -53,7 +53,7 @@ def create_mask_transform(mask_width: int, mask_height: int) \
         transforms.ToPILImage(),
         transforms.Resize(256, interpolation=InterpolationMode.NEAREST),
         transforms.CenterCrop(224),
-        transforms.Resize([mask_height, mask_width],
+        transforms.Resize([filter_height, filter_width],
                           interpolation=InterpolationMode.NEAREST),
         transforms.ToTensor(),
     ])
@@ -64,8 +64,8 @@ class _VisualGenomeAbstract(Dataset):
 
     def __init__(self, root: str, objs_file: str, cat_mappings_file: str,
                  transform: Optional[Callable],
-                 mask_width: int = 7,
-                 mask_height: int = 7):
+                 filter_width: int,
+                 filter_height: int):
         """
         Initialize an object which can load VG images and annotations.
 
@@ -76,14 +76,15 @@ class _VisualGenomeAbstract(Dataset):
             cat_mappings_file (str): Path to the pickle file containing the
                 category mappings.
             transform (Optional[Callable]): Transform to apply to the images.
-            mask_width (int, optional): Width that the segmentation mask should
-                be resized to. Defaults to 7.
-            mask_height (int, optional): Height that the segmentation mask
-                should be resized to. Defaults to 7.
+            filter_width (int): Width that the segmentation mask should be
+                resized to.
+            filter_height (int): Height that the segmentation mask should be
+                resized to.
         """
         self.root = root
         self.transform = transform
-        self.mask_transform = create_mask_transform(mask_width, mask_height)
+        self.mask_transform = create_mask_transform(filter_width,
+                                                    filter_height)
         with open(objs_file) as f:
             self.samples = json.load(f)
 
@@ -102,8 +103,8 @@ class VisualGenomeImages(_VisualGenomeAbstract):
 
     def __init__(self, root: str, objs_file: str, cat_mappings_file: str,
                  transform: Optional[Callable],
-                 mask_width: int = 7,
-                 mask_height: int = 7):
+                 filter_width: int,
+                 filter_height: int):
         """
         Initialize an object which can load VG images and annotations.
 
@@ -114,13 +115,13 @@ class VisualGenomeImages(_VisualGenomeAbstract):
             cat_mappings_file (str): Path to the pickle file containing the
                 category mappings.
             transform (Optional[Callable]): Transform to apply to the images.
-            mask_width (int, optional): Width that the segmentation mask should
-                be resized to. Defaults to 7.
-            mask_height (int, optional): Height that the segmentation mask
-                should be resized to. Defaults to 7.
+            filter_width (int): Width that the segmentation mask should be
+                resized to.
+            filter_height (int): Height that the segmentation mask should be
+                resized to.
         """
         super().__init__(root, objs_file, cat_mappings_file,
-                         transform, mask_width, mask_height)
+                         transform, filter_width, filter_height)
 
         # Remove samples that don't have any categories.
         self.samples = [sample for sample in self.samples
@@ -147,7 +148,7 @@ class VisualGenomeImages(_VisualGenomeAbstract):
                 - GloVe category index for each instance.
                     Shape: [num_instances]
                 - Mask for each instance.
-                    Shape: [num_instances, 1, mask_width, mask_height]
+                    Shape: [num_instances, 1, filter_width, filter_height]
         """
         # Get the image and apply augmentations.
         path = f"VG_100K/{self.samples[index]['image_id']}.jpg"
@@ -167,7 +168,8 @@ class VisualGenomeImages(_VisualGenomeAbstract):
                 mask = torch.zeros(img_og.size)
                 mask[bbox["y"]:bbox["y"] + bbox["h"],
                      bbox["x"]:bbox["x"] + bbox["w"]] = 1
-                masks.append(self.mask_transform(mask))
+                mask = self.mask_transform(mask)
+                masks.append(mask)
         targets = torch.tensor(targets)
         masks = torch.stack(masks)
 
@@ -179,8 +181,8 @@ class VisualGenomeInstances(_VisualGenomeAbstract):
 
     def __init__(self, root: str, objs_file: str, cat_mappings_file: str,
                  transform: Optional[Callable],
-                 mask_width: int = 7,
-                 mask_height: int = 7):
+                 filter_width: int,
+                 filter_height: int):
         """
         Initialize an object which can load VG images and annotations.
 
@@ -191,13 +193,13 @@ class VisualGenomeInstances(_VisualGenomeAbstract):
             cat_mappings_file (str): Path to the pickle file containing the
                 category mappings.
             transform (Optional[Callable]): Transform to apply to the images.
-            mask_width (int, optional): Width that the segmentation mask should
-                be resized to. Defaults to 7.
-            mask_height (int, optional): Height that the segmentation mask
-                should be resized to. Defaults to 7.
+            filter_width (int): Width that the segmentation mask should be
+                resized to.
+            filter_height (int): Height that the segmentation mask should be
+                resized to.
         """
         super().__init__(root, objs_file, cat_mappings_file,
-                         transform, mask_width, mask_height)
+                         transform, filter_width, filter_height)
 
         # Create a mapping from instances to bboxes.
         self.instance2idx = []
@@ -234,7 +236,7 @@ class VisualGenomeInstances(_VisualGenomeAbstract):
                 - One-hot target category vector.
                     Shape: [num_categories]
                 - Instance mask.
-                    Shape: [1, mask_width, mask_height]
+                    Shape: [1, filter_width, filter_height]
         """
         sample_idx, cat_token, bbox_idx = self.instance2idx[index]
 
@@ -263,8 +265,8 @@ class _CocoAbstract(Dataset):
 
     def __init__(self, root: str, ann_file: str, cat_mappings_file: str,
                  transform: Optional[Callable],
-                 mask_width: int = 7,
-                 mask_height: int = 7):
+                 filter_width: int,
+                 filter_height: int):
         """
         Initialize an object which can load COCO images and annotations.
 
@@ -274,19 +276,18 @@ class _CocoAbstract(Dataset):
             cat_mappings_file (str): Path to the pickle file containing the
                 category mappings.
             transform (Optional[Callable]): Transform to apply to the images.
-            mask_width (int, optional): Width that the segmentation mask should
-                be resized to. Defaults to 7.
-            mask_height (int, optional): Height that the segmentation mask
-                should be resized to. Defaults to 7.
+            filter_width (int): Width that the segmentation mask should be
+                resized to.
+            filter_height (int): Height that the segmentation mask should be
+                resized to.
         """
         super().__init__()
         self.root = root
         self.coco = COCO(ann_file)
         self.transform = transform
         self.ids = sorted(self.coco.imgs.keys())
-        self.mask_transform = create_mask_transform(mask_width, mask_height)
-        self.mask_width = mask_width
-        self.mask_height = mask_height
+        self.mask_transform = create_mask_transform(filter_width,
+                                                    filter_height)
 
         # Load the categories. `self.cat_mappings` is a dictionary that
         # contains the following entries:
@@ -307,8 +308,8 @@ class CocoImages(_CocoAbstract):
 
     def __init__(self, root: str, ann_file: str, cat_mappings_file: str,
                  transform: Optional[Callable],
-                 mask_width: int = 7,
-                 mask_height: int = 7):
+                 filter_width: int,
+                 filter_height: int):
         """
         Initialize an object which can load COCO images and annotations.
 
@@ -317,13 +318,13 @@ class CocoImages(_CocoAbstract):
             ann_file (str): Path to json file containing instance annotations.
             cat_mappings_file (str): Path to pickle file containing categories.
             transform (Optional[Callable]): Transform to apply to the images.
-            mask_width (int, optional): Width that the segmentation mask should
-                be resized to. Defaults to 7.
-            mask_height (int, optional): Height that the segmentation mask
-                should be resized to. Defaults to 7.
+            filter_width (int): Width that the segmentation mask should be
+                resized to.
+            filter_height (int): Height that the segmentation mask should be
+                resized to.
         """
         super().__init__(root, ann_file, cat_mappings_file,
-                         transform, mask_width, mask_height)
+                         transform, filter_width, filter_height)
 
         # Remove samples that don't have any annotations.
         self.ids = [image_id for image_id in self.ids
@@ -345,7 +346,7 @@ class CocoImages(_CocoAbstract):
                 - GloVe category index for each instance.
                     Shape: [num_instances].
                 - Mask for each instance.
-                    Shape: [num_instances, 1, mask_width, mask_height].
+                    Shape: [num_instances, 1, filter_width, filter_height].
         """
         # Get the instance annotations from the dataset. An instance annotation
         # is a dictionary that contains (among others) the following entries:
@@ -382,8 +383,8 @@ class CocoInstances(_CocoAbstract):
 
     def __init__(self, root: str, ann_file: str, cat_mappings_file: str,
                  transform: Optional[Callable],
-                 mask_width: int = 7,
-                 mask_height: int = 7):
+                 filter_width: int,
+                 filter_height: int):
         """
         Initialize an object which can load COCO images and annotations.
 
@@ -392,13 +393,13 @@ class CocoInstances(_CocoAbstract):
             ann_file (str): Path to json file containing instance annotations.
             cat_mappings_file (str): Path to pickle file containing categories.
             transform (Optional[Callable]): Transform to apply to the images.
-            mask_width (int, optional): Width that the segmentation mask should
-                be resized to. Defaults to 7.
-            mask_height (int, optional): Height that the segmentation mask
-                should be resized to. Defaults to 7.
+            filter_width (int): Width that the segmentation mask should be
+                resized to.
+            filter_height (int): Height that the segmentation mask should be
+                resized to.
         """
         super().__init__(root, ann_file, cat_mappings_file,
-                         transform, mask_width, mask_height)
+                         transform, filter_width, filter_height)
         self.ids = sorted(self.coco.anns.keys())
 
         # Define a dict that maps a GloVe index to its index in the
@@ -423,7 +424,7 @@ class CocoInstances(_CocoAbstract):
                 - Multiple-hot target category vector.
                     Shape: [num_categories].
                 - Instance mask.
-                    Shape: [1, mask_width, mask_height].
+                    Shape: [1, filter_width, filter_height].
         """
         # Get the instance annotation from the dataset. An instance annotation
         # is a dictionary that contains (among others) the following entries:
