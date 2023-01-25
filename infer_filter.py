@@ -419,7 +419,7 @@ def inference(args: argparse.Namespace,
 
     # Compute the average recall.
     recall /= recall_terms
-    print(f"Average recall: {recall}")
+    print(f"Recall@{args.s}: {recall}")
 
 
 def main(args: argparse.Namespace):
