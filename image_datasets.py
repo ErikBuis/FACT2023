@@ -250,7 +250,7 @@ class VisualGenomeInstances(_VisualGenomeAbstract):
 
         # Load the segmentation mask for the instance.
         bbox = self.samples[sample_idx]["objects"][cat_token][bbox_idx]
-        mask = torch.zeros(img.shape)
+        mask = torch.zeros(img_og.size)
         mask[bbox["y"]:bbox["y"] + bbox["h"],
              bbox["x"]:bbox["x"] + bbox["w"]] = 1
         mask = self.mask_transform(mask)
