@@ -8,15 +8,16 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
-import wandb
-from image_datasets import (CocoImages, VisualGenomeImages, data_transforms,
-                            unnormalize)
-from model_loader import forward_Exp, forward_Feat, setup_explainer
 from tabulate import tabulate
 from torch.linalg import vector_norm
 from torch.utils.data import DataLoader, Subset
 from torchtext.vocab import GloVe
 from tqdm import tqdm
+
+import wandb
+from image_datasets import (CocoImages, VisualGenomeImages, data_transforms,
+                            unnormalize)
+from model_loader import forward_Exp, forward_Feat, setup_explainer
 
 
 def find_max_activations(args: argparse.Namespace, model: nn.Module,
@@ -419,7 +420,7 @@ def inference(args: argparse.Namespace,
 
     # Compute the average recall.
     recall /= recall_terms
-    print(f"Recall@{args.s}: {recall}")
+    print(f"Recall@{args.s}: {recall:.3f}")
 
 
 def main(args: argparse.Namespace):
