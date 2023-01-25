@@ -21,3 +21,6 @@
 
 # Ignore wandb files.
 **/wandb
+
+# Ignore Lisa job files.
+**.job
