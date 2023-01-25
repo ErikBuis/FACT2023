@@ -141,9 +141,9 @@ def main():
         pickle.dump(cat_mappings, f)
 
     # Preprocess the Visual Genome dataset.
-    # samples = _load_samples(root)
-    # preprocessed_samples = preprocess_vg(samples)
-    # _save_samples(root, preprocessed_samples)
+    samples = _load_samples(root)
+    preprocessed_samples = preprocess_vg(samples)
+    _save_samples(root, preprocessed_samples)
 
 
 if __name__ == "__main__":

@@ -141,7 +141,7 @@ class VisualGenomeImages(_VisualGenomeAbstract):
             index (int): Index of the image to be returned.
 
         Returns:
-            Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+            Tuple[Image.Image, torch.Tensor, torch.Tensor]:
                 - Image from the dataset.
                     Shape: [3, 224, 224]
                 - GloVe category index for each instance.
@@ -228,7 +228,7 @@ class VisualGenomeInstances(_VisualGenomeAbstract):
             index (int): Index of the instance to be returned.
 
         Returns:
-            Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+            Tuple[Image.Image, torch.Tensor, torch.Tensor]:
                 - Image in which the instance is found.
                     Shape: [3, 224, 224]
                 - One-hot target category vector.
@@ -339,7 +339,7 @@ class CocoImages(_CocoAbstract):
             index (int): Index of the image to be returned.
 
         Returns:
-            Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+            Tuple[Image.Image, torch.Tensor, torch.Tensor]:
                 - Image from the dataset.
                     Shape: [3, 224, 224].
                 - GloVe category index for each instance.
@@ -417,7 +417,7 @@ class CocoInstances(_CocoAbstract):
             index (int): Index of the instance to be returned.
 
         Returns:
-            Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+            Tuple[Image.Image, torch.Tensor, torch.Tensor]:
                 - Image in which the instance is found.
                     Shape: [3, 224, 224].
                 - Multiple-hot target category vector.

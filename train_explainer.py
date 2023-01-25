@@ -8,7 +8,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.linalg import vector_norm
-from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
 from torch.utils.data.dataset import random_split
 from torchtext.vocab import GloVe
@@ -259,11 +258,10 @@ def main(args: argparse.Namespace):
     torch.backends.cudnn.benchmark = False
 
     # Set up run name.
-    if not args.name:
-        args.name = f"vsf_{args.refer}_{args.model}_{args.layer_target}_" \
-            f"{args.anno_rate:.1f}"
+    if args.name is None:
+        args.name = f"{args.model}-{args.layer_target}-imagenet-{args.refer}"
     if args.random:
-        args.name += "_random"
+        args.name += "-random"
 
     # Set up output path.
     args.dir_save = os.path.join(args.dir_save, args.name)
@@ -456,7 +454,7 @@ if __name__ == "__main__":
                         help="Hyperparameter for margin ranking loss")
     parser.add_argument("--model", type=str, default="resnet50",
                         help="Target network")
-    parser.add_argument("--name", type=str, default="debug",
+    parser.add_argument("--name", type=str, default=None,
                         help="Experiment name")
     parser.add_argument("--num-workers", type=int, default=16,
                         help="Number of subprocesses to use for data loading")

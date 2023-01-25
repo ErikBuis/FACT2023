@@ -430,6 +430,12 @@ def main(args: argparse.Namespace):
     Args:
         args (argparse.Namespace): The command line arguments.
     """
+    # Set up run name.
+    if args.name is None:
+        args.name = f"{args.model}-{args.layer_target}-imagenet-{args.refer}"
+    if args.random:
+        args.name += "-random"
+
     # Set up output path.
     args.dir_save = os.path.join(args.dir_save, args.name)
     if not os.path.exists(args.dir_save):
@@ -540,7 +546,7 @@ if __name__ == "__main__":
                         help="Method used to explain the target filter")
     parser.add_argument("--model", type=str, default="resnet50",
                         help="Target network")
-    parser.add_argument("--name", type=str, default="debug",
+    parser.add_argument("--name", type=str, default=None,
                         help="Experiment name")
     parser.add_argument("--num-heatmaps", type=int, default=5,
                         help="Number of activation heatmaps to visualize")

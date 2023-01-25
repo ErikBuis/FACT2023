@@ -17,13 +17,5 @@ cd $HOME/FACT2023
 
 source activate fact2023
 
-# Set the training parameters here.
-model=resnet50
-dataset_refer=vg
-dataset_target=imagenet
-layer_target=layer4
-batch_size=1
-num_workers=4
-
 # Perform inference on the filters.
-srun python -u infer_filter.py --model "$model" --layer-target "$layer_target" --refer "$dataset_refer" --name "$model"-"$layer_target"-"$dataset_target"-"$dataset_refer" --num-workers "$num_workers" --batch-size "$batch_size" --weigh-s-by-relevance
+srun python -u infer_filter.py --model resnet18 --layer-target layer4 --refer vg --num-workers 4 --batch-size 1 --weigh-s-by-relevance

@@ -17,33 +17,4 @@ cd $HOME/FACT2023
 
 source activate fact2023
 
-# This script is used to download the COCO dataset and extract the
-# images and annotations.
-
-# Download the COCO dataset.
-echo "Downloading the COCO dataset..."
-wget http://images.cocodataset.org/zips/train2017.zip -P data/coco
-wget http://images.cocodataset.org/zips/val2017.zip -P data/coco
-
-# Extract the images.
-echo "Extracting the images..."
-unzip data/coco/train2017.zip -d data/coco
-unzip data/coco/val2017.zip -d data/coco
-
-# Remove the empty folders and zip files.
-rm data/coco/train2017.zip
-rm data/coco/val2017.zip
-
-# Download the annotations.
-echo "Downloading the annotations..."
-wget http://images.cocodataset.org/annotations/annotations_trainval2017.zip -P data/coco
-
-# Extract the annotations.
-unzip data/coco/annotations_trainval2017.zip -d data/coco
-
-# Remove the zip file.
-rm data/coco/annotations_trainval2017.zip
-
-# Run the script to create the dataset.
-echo "Creating the dataset..."
-srun python -u ./data/vg/preprocess_coco.py
+sh ./setup_coco.sh
