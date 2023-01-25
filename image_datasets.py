@@ -132,7 +132,7 @@ class VisualGenomeImages(_VisualGenomeAbstract):
         return len(self.samples)
 
     def __getitem__(self, index: int) \
-            -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+            -> Tuple[Image.Image, torch.Tensor, torch.Tensor]:
         """
         Get a single image from the dataset, along with all its instances.
         An "instance" refers to a specific occurrence of an object in an image.
@@ -164,7 +164,7 @@ class VisualGenomeImages(_VisualGenomeAbstract):
                 # Add the GloVe index to the list of targets.
                 targets.append(self.cat_mappings["stoi"][cat_token])
                 # Add the mask to the list of masks.
-                mask = torch.zeros(img.shape)
+                mask = torch.zeros(img_og.size)
                 mask[bbox["y"]:bbox["y"] + bbox["h"],
                      bbox["x"]:bbox["x"] + bbox["w"]] = 1
                 masks.append(self.mask_transform(mask))
@@ -219,7 +219,7 @@ class VisualGenomeInstances(_VisualGenomeAbstract):
         return len(self.instance2idx)
 
     def __getitem__(self, index: int) \
-            -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+            -> Tuple[Image.Image, torch.Tensor, torch.Tensor]:
         """
         Get a single instance from the dataset.
         An "instance" refers to a specific occurrence of an object in an image.
@@ -330,7 +330,7 @@ class CocoImages(_CocoAbstract):
                     if len(self.coco.getAnnIds(image_id)) > 0]
 
     def __getitem__(self, index: int) \
-            -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+            -> Tuple[Image.Image, torch.Tensor, torch.Tensor]:
         """
         Get a single image from the dataset, along with all its instances.
         An "instance" refers to a specific occurrence of an object in an image.
@@ -408,7 +408,7 @@ class CocoInstances(_CocoAbstract):
             self.glove2vec_idx[glove_idx] = i
 
     def __getitem__(self, index: int) \
-            -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+            -> Tuple[Image.Image, torch.Tensor, torch.Tensor]:
         """
         Get a single instance from the dataset.
         An "instance" refers to a specific occurrence of an object in an image.
