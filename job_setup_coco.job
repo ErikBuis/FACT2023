@@ -22,24 +22,27 @@ source activate fact2023
 
 # Download the COCO dataset.
 echo "Downloading the COCO dataset..."
-TODO
+wget http://images.cocodataset.org/zips/train2017.zip -P data/coco
+wget http://images.cocodataset.org/zips/val2017.zip -P data/coco
 
 # Extract the images.
 echo "Extracting the images..."
-TODO
+unzip data/coco/train2017.zip -d data/coco
+unzip data/coco/val2017.zip -d data/coco
 
 # Remove the empty folders and zip files.
-TODO
+rm data/coco/train2017.zip
+rm data/coco/val2017.zip
 
 # Download the annotations.
 echo "Downloading the annotations..."
-TODO
+wget http://images.cocodataset.org/annotations/annotations_trainval2017.zip -P data/coco
 
 # Extract the annotations.
-TODO
+unzip data/coco/annotations_trainval2017.zip -d data/coco
 
 # Remove the zip file.
-TODO
+rm data/coco/annotations_trainval2017.zip
 
 # Run the script to create the dataset.
 echo "Creating the dataset..."
