@@ -355,8 +355,10 @@ def inference(args: argparse.Namespace,
                                                acts_u_resized[img_idx]))
 
                 # Compute IoU between the heatmap and the mask.
-                W_u_i = [glove_idx.item()
-                         for glove_idx in word_preds_per_img[img_idx]]
+                # W_u_i = [glove_idx.item()
+                #          for glove_idx in word_preds_per_img[img_idx]]
+                most_common_coco_words: list[str] = ["person", "car", "chair", "book", "bottle", "cup", "dining" "table", "bowl", "traffic" "light", "handbag", "umbrella", "bird", "boat", "truck", "bench", "sheep", "banana", "kite", "motorcycle", "backpack"]
+                W_u_i = [glove.stoi[word] for word in most_common_coco_words]
                 R_x = acts_u_resized[img_idx] > thresholds_act_masking[u]
 
                 masks_img_resized = F.interpolate(masks[img_idx],
