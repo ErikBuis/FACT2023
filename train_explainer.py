@@ -119,7 +119,7 @@ def train_one_epoch(args: argparse.Namespace,
                     .any().detach().item()
 
         # Print logging data.
-        if batch_idx % 10 == 0 or batch_idx == amount_batches - 1:
+        if (batch_idx + 1) % 10 == 0 or batch_idx == amount_batches - 1:
             epoch_chars = len(str(args.epochs))
             batch_chars = len(str(amount_batches))
             print(f"[Epoch {epoch:{epoch_chars}d}: "

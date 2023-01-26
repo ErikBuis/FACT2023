@@ -3,8 +3,8 @@
 #SBATCH --partition=gpu_titanrtx_shared_course
 #SBATCH --gres=gpu:1
 #SBATCH --job-name=InferFilter
-#SBATCH --ntasks=1
-#SBATCH --cpus-per-task=1
+#SBATCH --ntasks=4
+#SBATCH --cpus-per-task=4
 #SBATCH --time=00:20:00
 #SBATCH --mem=32000M
 #SBATCH --output=slurm_infer_filter_%A.out
@@ -17,5 +17,11 @@ cd $HOME/FACT2023
 
 source activate fact2023
 
+# Copy the dataset to the scratch filesystem.
+echo "Copying dataset to scratch filesystem..."
+mkdir -p $TMPDIR/data/coco
+cp -r $HOME/FACT2023/data/coco $TMPDIR/data/coco
+
 # Perform inference on the filters.
-srun python -u infer_filter.py --model alexnet --layer-target features --layer-classifier classifier --refer coco --num-workers 1 --batch-size 1 --weigh-s-by-relevance
+echo "Performing inference on the filters..."
+srun python -u infer_filter.py --model alexnet --layer-target features --layer-classifier classifier --refer coco --num-workers 1 --batch-size 1 --dir-data $TMPDIR/data/coco --weigh-s-by-relevance --s 5
