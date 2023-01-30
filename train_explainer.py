@@ -186,8 +186,8 @@ def validate(args: argparse.Namespace,
     avg_acc = {k: 0 for k in ks}
 
     # Iterate over the validation set.
-    with torch.no_grad():
-        for imgs, targets, masks in valid_loader:
+    for imgs, targets, masks in valid_loader:
+        with torch.no_grad():
             # Move batch data to GPU.
             imgs, targets, masks = imgs.cuda(), targets.cuda(), masks.cuda()
             curr_batch_size = imgs.shape[0]
