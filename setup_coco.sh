@@ -28,7 +28,7 @@ unzip "$coco_dir"/annotations_trainval2017.zip -d "$coco_dir"
 # Remove the zip file.
 rm "$coco_dir"/annotations_trainval2017.zip
 
-# Run the script to preprocess the dataset.
+# Run the script to pre-process the dataset.
 echo "Preprocessing the dataset..."
 python3 "$coco_dir"/preprocess_coco.py
 

@@ -2,7 +2,6 @@
 
 import os
 import pickle
-import torch
 
 from pycocotools.coco import COCO
 from torchtext.vocab import GloVe
@@ -22,26 +21,24 @@ def compute_cat_mappings(ann_file: str, glove: GloVe) \
             - "stoi" (dict): COCO category to GloVe index.
             - "itos" (dict): GloVe index to COCO category.
     """
+    print("Computing category mappings...", end=" ")
     coco = COCO(ann_file)
     cat_mappings = {"stoi": {}, "itos": {}}
     for cat in coco.cats.values():
         for token in cat["name"].split(" "):
             cat_mappings["stoi"][token] = glove.stoi[token]
             cat_mappings["itos"][glove.stoi[token]] = token
+    print("Done.")
     return cat_mappings
 
 
 def main():
     root = "./data/coco"
+    glove = GloVe(name="6B", dim=300)
 
     # Compute the category mappings.
     ann_file = os.path.join(root, "annotations/instances_train2017.json")
-    glove = GloVe(name="6B", dim=300)
-    print("Computing category mappings...", end=" ")
     cat_mappings = compute_cat_mappings(ann_file, glove)
-    print("Done.")
-
-    # Save the category mappings into a pickle file.
     with open(os.path.join(root, "cat_mappings.pkl"), "wb") as f:
         pickle.dump(cat_mappings, f)
 

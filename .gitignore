@@ -3,7 +3,6 @@
 **/data/coco/train2017
 **/data/coco/val2017
 **/data/vg/VG_100K
-**/data/vg/VG_100K_2
 **.pkl
 **.pth
 **.pt
@@ -24,3 +23,6 @@
 
 # Ignore Lisa job files.
 **.job
+
+# Ignore random test files.
+**test.py

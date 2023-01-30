@@ -4,8 +4,8 @@
 #SBATCH --gres=gpu:1
 #SBATCH --job-name=TrainExplainer
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
-#SBATCH --time=18:00:00
+#SBATCH --cpus-per-task=3
+#SBATCH --time=00:20:00
 #SBATCH --mem=32000M
 #SBATCH --output=slurm_train_explainer_%A.out
 
@@ -17,11 +17,13 @@ cd $HOME/FACT2023
 
 source activate fact2023
 
+refer=coco
+
 # Copy the dataset to the scratch filesystem.
 echo "Copying dataset to scratch filesystem..."
-mkdir -p $TMPDIR/data/coco
-cp -r $HOME/FACT2023/data/coco $TMPDIR/data/coco
+mkdir -p $TMPDIR/data
+cp -r $HOME/FACT2023/data/$refer $TMPDIR/data
 
 # Train the explainer.
 echo "Training the explainer..."
-srun python -u train_explainer.py --model alexnet --layer-target features --layer-classifier classifier --refer coco --epochs 50 --num-workers 4 --batch-size 256 --dir-data $TMPDIR/data/coco
+srun python -u train_explainer.py --model resnet18 --layer-target layer4 --layer-classifier fc --refer $refer --epochs 1 --num-workers 3 --batch-size 512 --dir-data $TMPDIR/data

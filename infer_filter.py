@@ -56,7 +56,7 @@ def find_max_activations(args: argparse.Namespace, model: nn.Module,
     max_acts_sorted = {u: [] for u in u_not_computed}
     for batch_idx, (imgs, _, _) in enumerate(tqdm(dataloader)):
         # Move batch data to GPU.
-        imgs = imgs.cuda().detach()
+        imgs = imgs.cuda()
 
         # Forward pass through feature extractor Feat().
         acts = forward_Feat(args, model, imgs)
@@ -131,7 +131,7 @@ def find_thresholds_act_masking(args: argparse.Namespace, model: nn.Module,
     acts_all = {u: torch.tensor([], device="cuda") for u in u_not_computed}
     for imgs, _, _ in tqdm(dataloader):
         # Move batch data to GPU.
-        imgs = imgs.cuda().detach()
+        imgs = imgs.cuda()
 
         # Forward pass through feature extractor Feat().
         acts = forward_Feat(args, model, imgs)
@@ -179,7 +179,7 @@ def explain(method: str, model: nn.Module, imgs: torch.Tensor,
 
     Returns:
         torch.Tensor: The prediction of the model for each image.
-            Shape: [batch_size, word_embedding_dim]
+            Shape: [batch_size, word_embedding_dim].
     """
     if method == "original":
         # Original image.
@@ -275,6 +275,7 @@ def inference(args: argparse.Namespace,
 
     # Loop over all target filters to explain each one.
     for u, max_imgs_sorted_u in max_imgs_sorted.items():
+        print("--------------------------------------------------------------")
         print(f"Interpreting filter {u} with top {args.p} activated images...")
 
         # Create a new dataloader that only contains the p images that
@@ -354,35 +355,39 @@ def inference(args: argparse.Namespace,
                 heatmaps.append(create_heatmap(unnormalize(imgs[img_idx]),
                                                acts_u_resized[img_idx]))
 
-                # Compute IoU between the heatmap and the mask.
-                # W_u_i = [glove_idx.item()
-                #          for glove_idx in word_preds_per_img[img_idx]]
-                most_common_coco_words: list[str] = ["person", "car", "chair", "book", "bottle", "cup", "dining", "table", "bowl", "traffic", "light", "handbag", "umbrella", "bird", "boat", "truck", "bench", "sheep", "banana", "kite"][:args.s]
-                W_u_i = [glove.stoi[word] for word in most_common_coco_words]
+                # Get the top `s` words that the model predicted.
+                W_u_i = [glove_idx.item()
+                         for glove_idx in word_preds_per_img[img_idx]]
+
+                # Calculate the ground-truth words.
                 R_x = acts_u_resized[img_idx] > thresholds_act_masking[u]
+
+                # If you want to check the baseline, uncomment the following:
+                # most_common_coco_words = [
+                #     "person", "car", "chair", "book", "bottle",
+                #     "cup", "dining", "table", "bowl", "traffic",
+                #     "light", "handbag", "umbrella", "bird", "boat",
+                #     "truck", "bench", "sheep", "banana", "kite"
+                # ][:args.s]
+                # W_u_i = [glove.stoi[word] for word in most_common_coco_words]
+                # R_x = torch.ones_like(acts_u_resized[img_idx]).bool()
 
                 masks_img_resized = F.interpolate(masks[img_idx],
                                                   size=imgs.shape[-2:],
                                                   mode="nearest").bool()
                 targets_img = targets[img_idx]
-
-                print("----------------------------------------")
-                print(f"Predicted words: {[glove.itos[idx] for idx in W_u_i]}")
-
                 G_u_i = []
                 for M_j, t_j in zip(masks_img_resized, targets_img):
                     IoU = (R_x & M_j).sum() / (R_x | M_j).sum()
                     if IoU > args.threshold_iou:
                         G_u_i.append(t_j.item())
-                        print(f"Ground-truth word: {glove.itos[t_j.item()]}")
+
+                print(f"Predicted words: {[glove.itos[i] for i in W_u_i]}")
+                print(f"Ground-truth words: {[glove.itos[i] for i in G_u_i]}")
+
+                # Compute the recall.
                 if len(G_u_i) == 0:
                     continue
-
-                print(f"{set(G_u_i)=}")
-                print(f"{set(W_u_i)=}")
-                result_g = set(G_u_i) & set(W_u_i)
-                print(f"Set: {result_g}")
-                print(f"Length of intersection: {len(result_g)}")
                 recall_u_i = len(set(G_u_i) & set(W_u_i)) / len(G_u_i)
                 recall += recall_u_i
                 recall_terms += 1
@@ -489,29 +494,32 @@ def main(args: argparse.Namespace):
     model = model.cuda()
     print("Done.")
 
-    # Calculate the mask size.
-    filter_width, filter_height = forward_Feat(
+    # Calculate the filter dimensions.
+    _, amount_filters, filter_width, filter_height = forward_Feat(
         args, model, torch.zeros(1, 3, 224, 224).cuda()
-    ).shape[-2:]
+    ).shape
+    for u in args.u:
+        if u >= amount_filters:
+            raise ValueError(f"Filter {u} does not exist in the model.")
 
     # Set up dataset.
-    if args.refer == "vg":
-        # Set up Visual Genome dataset.
-        root = os.path.join(args.dir_data, "vg")
-        dataset = VisualGenomeImages(
-            root=root,
-            objs_file=os.path.join(root, "vg_objects_preprocessed.json"),
+    if args.refer == "coco":
+        # Set up COCO dataset.
+        root = os.path.join(args.dir_data, "coco")
+        dataset = CocoImages(
+            ann_file=os.path.join(root, "annotations/instances_val2017.json"),
+            root=os.path.join(root, "val2017"),
             cat_mappings_file=os.path.join(root, "cat_mappings.pkl"),
             transform=data_transforms["val"],
             filter_width=filter_width,
             filter_height=filter_height
         )
-    elif args.refer == "coco":
-        # Set up COCO dataset.
-        root = os.path.join(args.dir_data, "coco")
-        dataset = CocoImages(
-            root=os.path.join(root, "val2017"),
-            ann_file=os.path.join(root, "annotations/instances_val2017.json"),
+    elif args.refer == "vg":
+        # Set up Visual Genome dataset.
+        root = os.path.join(args.dir_data, "vg")
+        dataset = VisualGenomeImages(
+            objs_file=os.path.join(root, "vg_objects_preprocessed.json"),
+            root=root,
             cat_mappings_file=os.path.join(root, "cat_mappings.pkl"),
             transform=data_transforms["val"],
             filter_width=filter_width,
@@ -545,15 +553,15 @@ if __name__ == "__main__":
                         help="Path to the datasets")
     parser.add_argument("--dir-save", type=str, default="./outputs",
                         help="Path to model checkpoints")
-    parser.add_argument("--layer-target", type=str, default="layer4",
-                        help="Target layer to explain")
     parser.add_argument("--layer-classifier", type=str, default="fc",
                         help="Name of classifier layer")
+    parser.add_argument("--layer-target", type=str, default="layer4",
+                        help="Target layer to explain")
     parser.add_argument("--method", type=str, default="projection",
                         choices=("original", "image",
                                  "activation", "projection"),
                         help="Method used to explain the target filter")
-    parser.add_argument("--model", type=str, default="resnet50",
+    parser.add_argument("--model", type=str, default="resnet18",
                         help="Target network")
     parser.add_argument("--name", type=str, default=None,
                         help="Experiment name")
@@ -562,13 +570,14 @@ if __name__ == "__main__":
     parser.add_argument("--num-tokens", type=int, default=10,
                         help="Number of tokens to output to explain each "
                         "target filter")
-    parser.add_argument("--num-workers", type=int, default=16,
+    parser.add_argument("--num-workers", type=int, default=8,
                         help="Number of subprocesses to use for data loading")
     parser.add_argument("--p", type=int, default=25,
                         help="Number of top activated images used to explain "
                         "each filter")
     parser.add_argument("--path-model", type=str, default=None,
-                        help="Path to trained explainer model")
+                        help="Path to trained explainer model, "
+                        "selects the best checkpoint by default")
     parser.add_argument("--random", action="store_true",
                         help="Use a randomly initialized target model instead "
                         "of torchvision pretrained weights")
@@ -580,7 +589,7 @@ if __name__ == "__main__":
                         "activated image")
     parser.add_argument("--threshold-iou", type=float, default=0.04,
                         help="Threshold for filtering out low IoU scores.")
-    parser.add_argument("--u", type=list, default=list(range(0, 550, 50)),
+    parser.add_argument("--u", type=list, default=list(range(0, 251, 50)),
                         help="List of indices of the target filters")
     parser.add_argument("--wandb", action="store_true",
                         help="Use wandb for logging")
@@ -594,6 +603,6 @@ if __name__ == "__main__":
                         help="GloVe word embedding dimension to use")
 
     args = parser.parse_args()
-    print(args, "\n")
+    print(f"{args=}")
 
     main(args)

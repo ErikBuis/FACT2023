@@ -4,56 +4,69 @@ import json
 import os
 import pickle
 from collections import defaultdict
+from typing import Any, Tuple
 
 from torchtext.vocab import GloVe
 
 
-def compute_cat_mappings(label_file: str, glove: GloVe) \
-        -> dict[str, dict]:
+def load_samples(filename: str) -> list[dict[str, Any]]:
     """
-    Compute mappings from COCO categories to GloVe indices.
+    Load the samples from the original dataset.
 
     Args:
-        ann_file: Path to the annotation file.
-        glove: GloVe object.
+        filename: Path to the file containing object data.
 
     Returns:
-        dict: A dictionary containing the mappings. The keys are:
-            - "stoi" (dict): COCO category to GloVe index.
-            - "itos" (dict): GloVe index to COCO category.
+        list[dict[str, Any]]: The original object samples.
     """
-    with open(label_file, "rb") as f:
-        vg_labels = pickle.load(f)
-    cat_mappings = {"stoi": {}, "itos": {}}
-    for token in vg_labels:
-        cat_mappings["stoi"][token] = glove.stoi[token]
-        cat_mappings["itos"][glove.stoi[token]] = token
-    return cat_mappings
-
-
-def _load_samples(root: str) -> list:
-    """Load the object data from the json file."""
-    print("Loading object data...", end=" ")
-    path = os.path.join(root, "vg_objects.json")
-    with open(path) as f:
+    print("[ LOADING SAMPLES ]".center(79, "-"))
+    print(f"Loading samples from {filename}...", end=" ")
+    with open(filename, "r") as f:
         samples = json.load(f)
     print("Done.")
+    print()
     return samples
 
 
-def _save_samples(root: str, samples: list[dict[str, list[dict[str, int]]]]):
-    """Save the preprocessed object data to the json file."""
-    print("Saving object data...", end=" ")
-    path = os.path.join(root, "vg_objects_preprocessed.json")
-    with open(path, "w") as f:
-        json.dump(samples, f)
-    print("Done.")
-
-
-def preprocess_vg(samples: list, min_count: int = 100) \
-        -> list[dict[str, list[dict[str, int]]]]:
+def save_samples_preprocessed(
+        filename: str,
+        samples_preprocessed: list[dict[str, list[dict[str, int]]]]):
     """
-    Preprocess the data as described in the paper.
+    Save the pre-processed samples to a file.
+
+    Args:
+        filename: Path to the file to save the pre-processed samples to.
+        samples_preprocessed: The pre-processed samples.
+    """
+    print("[ SAVING SAMPLES ]".center(79, "-"))
+    print(f"Saving pre-processed samples to {filename}...", end=" ")
+    with open(filename, "w") as f:
+        json.dump(samples_preprocessed, f)
+    print("Done.")
+    print()
+
+
+def save_cat_mappings(filename: str, cat_mappings: dict[str, dict]):
+    """
+    Save the category mappings to a file.
+
+    Args:
+        filename: Path to the file to save the category mappings to.
+        cat_mappings: The category mappings.
+    """
+    print("[ SAVING CATEGORY MAPPINGS ]".center(79, "-"))
+    print(f"Saving category mappings to {filename}...", end=" ")
+    with open(filename, "wb") as f:
+        pickle.dump(cat_mappings, f)
+    print("Done.")
+    print()
+
+
+def preprocess_vg(samples: list[dict[str, Any]], glove: GloVe) \
+        -> Tuple[list[dict[str, list[dict[str, int]]]],
+                 set[str]]:
+    """
+    Pre-process the data as described in the paper.
 
     Excerpt from the paper:
     "We only use images that have box-able annotations for our experiments.
@@ -64,86 +77,122 @@ def preprocess_vg(samples: list, min_count: int = 100) \
     object categories, and at most 47 object categories per image."
 
     Args:
-        samples (list): The samples to preprocess.
-        min_count (int, optional): The minimum number of instances of a
-            category to keep. Defaults to 100.
+        samples (list[dict[str, Any]]): The samples to pre-process.
+        glove (GloVe): The GloVe word embeddings.
 
     Returns:
-        list[dict[str, list[dict[str, int]]]]: The preprocessed samples.
+        Tuple:
+            - list[dict[str, list[dict[str, int]]]]: The pre-processed samples.
+            - set[str]: The pre-processed categories.
     """
-    # Go through the dataset to perform the main preprocessing steps.
-    print("Preprocessing data...", end=" ")
-    catagory_counts = defaultdict(int)
-    preprocessed_samples = []
-    for image in samples:
-        # Remove images that have no box-able annotations.
-        if len(image["objects"]) == 0:
-            continue
+    # Print some statistics before pre-processing.
+    print("[ BEFORE PRE-PROCESSING ]".center(79, "-"))
+    amount_images = len(samples)
+    amount_instances = 0
+    categories = set()
+    for sample in samples:
+        amount_instances += len(sample["objects"])
+        for obj in sample["objects"]:
+            for cat_token in obj["names"]:
+                categories.add(cat_token)
+    amount_categories = len(categories)
+    print(f"{amount_images=}")
+    print(f"{amount_instances=}")
+    print(f"{amount_categories=}")
+    print()
 
-        result = defaultdict(list)
-        for obj in image["objects"]:
-            # Combine object categories based on their synset names.
-            if len(obj["synsets"]) == 0:
-                continue
-
-            # Count the number of instances of each category.
-            name = obj["synsets"][0].split(".")[0]
-            catagory_counts[name] += 1
-
-            # Combine instances of the same category in the same image.
-            result[name].append({"x": obj["x"], "y": obj["y"],
-                                 "h": obj["h"], "w": obj["w"]})
-
-        preprocessed_samples.append({"image_id": image["image_id"],
-                                     "objects": result})
-    print("Done.")
-
-    # Search for categories that appear in less than 100 training images.
-    print(f"Searching for categories that appear in less than {min_count} "
-          "training images...", end=" ")
-    objects_to_remove = [category
-                         for category, count in catagory_counts.items()
-                         if count < min_count]
+    # Count the number of instances in each pre-processed category.
+    # Combine object categories based on their synset names.
+    # Combine instances of the same category in the same image.
+    print("[ PRE-PROCESSING ]".center(79, "-"))
+    print("Pre-processing samples (pass 1/2)...", end=" ")
+    cat_token_counts = defaultdict(int)
+    samples_temp = []
+    for sample in samples:
+        objects = defaultdict(list)
+        for obj in sample["objects"]:
+            for synset in obj["synsets"]:
+                cat_token = synset.partition(".")[0].partition("_")[0]
+                if cat_token not in glove.stoi:
+                    continue
+                cat_token_counts[cat_token] += 1
+                objects[cat_token].append({"x": obj["x"], "y": obj["y"],
+                                           "h": obj["h"], "w": obj["w"]})
+        if len(objects) > 0:
+            samples_temp.append({"image_id": sample["image_id"],
+                                 "objects": objects})
     print("Done.")
 
     # Delete categories that appear in less than 100 training images.
-    print(f"Removing {len(objects_to_remove)} categories...")
-    for image in preprocessed_samples:
-        for category in objects_to_remove:
-            image["objects"].pop(category, None)
-    preprocessed_samples = [image for image in preprocessed_samples
-                            if len(image["objects"]) > 0]
+    print("Pre-processing samples (pass 2/2)...", end=" ")
+    samples_preprocessed = []
+    for sample in samples_temp:
+        objects = {cat_token: bboxes
+                   for cat_token, bboxes in sample["objects"].items()
+                   if cat_token_counts[cat_token] >= 100}
+        if len(objects) > 0:
+            samples_preprocessed.append({"image_id": sample["image_id"],
+                                         "objects": objects})
     print("Done.")
-
-    # Print some statistics.
     print()
-    print("Preprocessing complete.")
-    print("Amount of categories remaining: "
-          f"{len(catagory_counts) - len(objects_to_remove)}")
-    print("Amount of images remaining: "
-          f"{len(preprocessed_samples)}")
 
-    return preprocessed_samples
+    # Print some statistics after preprocessing.
+    print("[ AFTER PRE-PROCESSING ]".center(79, "-"))
+    amount_images = len(samples_preprocessed)
+    amount_instances = 0
+    categories = set()
+    for sample in samples_preprocessed:
+        amount_instances += len(sample["objects"])
+        for cat_token in sample["objects"]:
+            categories.add(cat_token)
+    amount_categories = len(categories)
+    print(f"{amount_images=}")
+    print(f"{amount_instances=}")
+    print(f"{amount_categories=}")
+    print()
+
+    return samples_preprocessed, categories
+
+
+def compute_cat_mappings(categories: set[str], glove: GloVe) \
+        -> dict[str, dict]:
+    """
+    Compute mappings from COCO categories to GloVe indices.
+
+    Args:
+        ann_file: Path to the annotation file.
+
+    Returns:
+        dict: A dictionary containing the mappings. The keys are:
+            - "stoi" (dict): COCO category to GloVe index.
+            - "itos" (dict): GloVe index to COCO category.
+    """
+    print("[ COMPUTING CATEGORY MAPPINGS ]".center(79, "-"))
+    print("Finding GloVe indices for each category...", end=" ")
+    cat_mappings = {"stoi": {}, "itos": {}}
+    for cat_token in categories:
+        cat_mappings["stoi"][cat_token] = glove.stoi[cat_token]
+        cat_mappings["itos"][glove.stoi[cat_token]] = cat_token
+    print("Done.")
+    print()
+    return cat_mappings
 
 
 def main():
     root = "./data/vg"
-
-    # Compute the category mappings.
-    label_file = os.path.join(root, "vg_labels.pkl")
     glove = GloVe(name="6B", dim=300)
-    print("Computing category mappings...", end=" ")
-    cat_mappings = compute_cat_mappings(label_file, glove)
-    print("Done.")
-
-    # Save the category mappings into a pickle file.
-    with open(os.path.join(root, "cat_mappings.pkl"), "wb") as f:
-        pickle.dump(cat_mappings, f)
 
     # Preprocess the Visual Genome dataset.
-    samples = _load_samples(root)
-    preprocessed_samples = preprocess_vg(samples)
-    _save_samples(root, preprocessed_samples)
+    samples = load_samples(os.path.join(root, "vg_objects.json"))
+    samples_preprocessed, categories = preprocess_vg(samples, glove)
+    save_samples_preprocessed(
+        os.path.join(root, "vg_objects_preprocessed.json"),
+        samples_preprocessed
+    )
+
+    # Compute mappings from category tokens to GloVe indices.
+    cat_mappings = compute_cat_mappings(categories, glove)
+    save_cat_mappings(os.path.join(root, "cat_mappings.pkl"), cat_mappings)
 
 
 if __name__ == "__main__":

@@ -1,9 +1,5 @@
-from typing import Optional
-
-import numpy as np
 import torch
 import torch.nn as nn
-from torch.linalg import vector_norm
 
 
 def set_bn_eval(m: nn.Module):
@@ -32,9 +28,7 @@ class CSMRLoss(nn.Module):
         super(CSMRLoss, self).__init__()
         self.margin = torch.tensor(margin).cuda()
 
-    def forward(self, preds: torch.Tensor, targets: torch.Tensor,
-                embeddings: torch.Tensor,
-                train_label_indices: Optional[np.ndarray] = None) \
+    def forward(self, cosine_similarity: torch.Tensor, targets: torch.Tensor) \
             -> torch.Tensor:
         """
         Forward pass of the Cosine Similarity Margin Ranking Loss.
@@ -42,37 +36,19 @@ class CSMRLoss(nn.Module):
         loss formulation described in the paper.
 
         Args:
-            preds (torch.Tensor): The predictions of the explainer model.
-                Shape: [batch_size, word_embedding_dim].
+            cosine_similarity (torch.Tensor): The cosine similarity between
+                each prediction and each ground-truth category embedding.
+                Shape: [batch_size, num_categories].
             targets (torch.Tensor): The multiple-hot target category vector.
                 Shape: [batch_size, num_categories].
-            embeddings (torch.Tensor): The ground-truth category embeddings.
-                Shape: [word_embedding_dim, num_categories].
-            train_label_indices (Optional[np.ndarray], optional): The indices
-                of the labels to train on. Defaults to None.
-                Shape: [num_train_labels].
 
         Returns:
             torch.Tensor: The average loss per sample in the batch.
         """
-        # Compute the cosine similarity between each prediction and
-        # each ground-truth category embedding.
-        cosine_similarity = (preds @ embeddings) \
-            / (vector_norm(preds, dim=1, keepdim=True) @
-               vector_norm(embeddings, dim=0, keepdim=True))
-
-        # If train_label_idx is not None, only compute the loss for the
-        # training labels. Mask any samples where a non-training label is the
-        # ground-truth label.
-        if train_label_indices is not None:
-            targets = targets[:, train_label_indices]
-            cosine_similarity = cosine_similarity[:, train_label_indices]
-            indices = torch.any(targets, dim=1)
-            cosine_similarity = cosine_similarity[indices]
-            targets = targets[indices]
-
         # Calculate the similarity between the positive concept and the
-        # prediction (i.e. dot preduct between v_t_j and v_hat) per sample.
+        # prediction (i.e. dot product between v_t_j and v_hat) per sample.
+        # Divide by the number of positive concepts per sample (if we are using
+        # multiple-hot vectors).
         pos_concept_sim = torch.sum(targets * cosine_similarity, dim=1) \
             / torch.sum(targets, dim=1)
 

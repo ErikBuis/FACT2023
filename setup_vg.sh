@@ -32,9 +32,12 @@ unzip "$vg_dir"/objects.json.zip -d "$vg_dir"/vg_objects.json
 # Remove the zip file.
 rm "$vg_dir"/objects.json.zip
 
-# Run the script to create the dataset.
+# Run the script to pre-process the dataset.
 echo "Creating the dataset..."
 python3 "$vg_dir"/preprocess_vg.py
+
+# Remove the original annotations file.
+rm "$vg_dir"/vg_objects.json
 
 # Print confirmation message.
 echo -e "\n>>> VG setup script finished <<<"
