@@ -1,14 +1,8 @@
 # Ignore the raw dataset files.
-**/data/coco/annotations
-**/data/coco/train2017
-**/data/coco/val2017
-**/data/vg/VG_100K
+**/data
 **.pkl
-**.pth
-**.pt
 **.json
 **.zip
-**.txt
 
 # Ignore cache files.
 **/__pycache__
@@ -17,6 +11,8 @@
 # Ignore the raw outputs of the training process.
 **/outputs
 **.out
+**.pth
+**.pt
 
 # Ignore wandb files.
 **/wandb
@@ -25,4 +21,5 @@
 **.job
 
 # Ignore random test files.
+**.txt
 **test.py
