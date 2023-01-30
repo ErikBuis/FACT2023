@@ -434,10 +434,11 @@ class CocoImages(_CocoAbstract):
             mask = self.mask_transform(self.coco.annToMask(ann))
             cat = self.coco.loadCats(ann["category_id"])[0]
             for cat_token in cat["name"].split():
-                # Add the GloVe index to the list of targets.
-                targets.append(self.cat_mappings["stoi"][cat_token])
-                # Add the mask to the list of masks.
-                masks.append(mask)
+                if cat_token in self.cat_mappings["stoi"]:
+                    # Add the GloVe index to the list of targets.
+                    targets.append(self.cat_mappings["stoi"][cat_token])
+                    # Add the mask to the list of masks.
+                    masks.append(mask)
         targets = torch.tensor(targets)
         masks = torch.stack(masks)
 
