@@ -142,8 +142,8 @@ def preprocess_vg(samples: list[dict[str, Any]], glove: GloVe) \
     amount_instances = 0
     categories = set()
     for sample in samples_preprocessed:
-        amount_instances += len(sample["objects"])
         for cat_token in sample["objects"]:
+            amount_instances += len(sample["objects"][cat_token])
             categories.add(cat_token)
     amount_categories = len(categories)
     print(f"{amount_images=}")
