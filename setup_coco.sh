@@ -30,7 +30,7 @@ rm "$coco_dir"/annotations_trainval2017.zip
 
 # Run the script to pre-process the dataset.
 echo "Preprocessing the dataset..."
-python3 "$coco_dir"/preprocess_coco.py
+python3 preprocess_coco.py
 
 # Print confirmation message.
 echo -e "\n>>> COCO setup script finished <<<"

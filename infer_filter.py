@@ -2,22 +2,36 @@ import argparse
 import os
 import pathlib
 from bisect import bisect_right
-from typing import Optional
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
-from tabulate import tabulate
-from torch.linalg import vector_norm
-from torch.utils.data import DataLoader, Subset
-from torchtext.vocab import GloVe
-from tqdm import tqdm
-
 import wandb
 from image_datasets import (CocoImages, VisualGenomeImages, data_transforms,
                             unnormalize)
+from infer_helpers import calculate_recall
 from model_loader import forward_Exp, forward_Feat, setup_explainer
+from tabulate import tabulate
+from torch.linalg import vector_norm
+from torch.utils.data import ConcatDataset, DataLoader, Subset
+from torchtext.vocab import GloVe
+from tqdm import tqdm
+
+
+def set_seed(seed: int):
+    """
+    Set a seed for all random number generators.
+
+    Args:
+        seed (int): The seed to use.
+    """
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
 
 
 def find_max_activations(args: argparse.Namespace, model: nn.Module,
@@ -236,7 +250,7 @@ def inference(args: argparse.Namespace,
               embeddings: torch.Tensor,
               dir_heatmaps: str,
               dir_max_acts: str,
-              dir_thresholds_act_masking: str) -> Optional[torch.Tensor]:
+              dir_thresholds_act_masking: str):
     """
     Perform inference on the given trained model.
 
@@ -290,7 +304,7 @@ def inference(args: argparse.Namespace,
 
         # Iterate over the p images that activated the target filter the
         # most. Use batches for efficiency.
-        for batch_idx, (imgs, targets, masks) in enumerate(dataloader_u):
+        for imgs, targets, masks in dataloader_u:
             # Move batch data to GPU.
             imgs, targets, masks = imgs.cuda(), targets.cuda(), masks.cuda()
 
@@ -309,10 +323,14 @@ def inference(args: argparse.Namespace,
             imgs_no_activation = max_acts_u <= 0
             if imgs_no_activation.any():
                 imgs = imgs[~imgs_no_activation]
+                targets = targets[~imgs_no_activation]
+                masks = masks[~imgs_no_activation]
                 acts = acts[~imgs_no_activation]
                 acts_u = acts_u[~imgs_no_activation]
                 acts_u_resized = acts_u_resized[~imgs_no_activation]
                 max_acts_u = max_acts_u[~imgs_no_activation]
+            if len(imgs) == 0:
+                continue
 
             # Explain the filters with the batch of images.
             preds = explain(args.method, model, imgs, acts, acts_u,
@@ -330,6 +348,25 @@ def inference(args: argparse.Namespace,
                 descending=True
             )[:, :args.s]
 
+            for img_idx in range(len(imgs)):
+                # Visualize heatmaps for the top `num_heatmaps` images.
+                if len(heatmaps) < args.num_heatmaps:
+                    heatmaps.append(create_heatmap(unnormalize(imgs[img_idx]),
+                                                   acts_u_resized[img_idx]))
+
+                # Compute the recall for the current image.
+                recall_u_i = calculate_recall(
+                    imgs[img_idx],
+                    targets[img_idx],
+                    masks[img_idx],
+                    set(word_preds_per_img[img_idx].tolist()),
+                    acts_u_resized[img_idx] > thresholds_act_masking[u],
+                    args.threshold_iou
+                )
+                if recall_u_i is not None:
+                    recall += recall_u_i
+                    recall_terms += 1
+
             # Repeat the `s` word predictions if the image that created
             # them caused high activations in our target filter to occur.
             # The assumption is that these images are more relevant to
@@ -337,7 +374,7 @@ def inference(args: argparse.Namespace,
             if args.weigh_s_by_relevance:
                 word_preds_per_img = torch.repeat_interleave(
                     word_preds_per_img,
-                    max_acts_u.int(),
+                    max_acts_u.ceil().int(),
                     dim=0
                 )
 
@@ -345,52 +382,6 @@ def inference(args: argparse.Namespace,
             # made with all the other word predictions we have made so far.
             word_preds = word_preds_per_img if word_preds is None \
                 else torch.cat((word_preds, word_preds_per_img))
-
-            # Visualize activation heatmaps for the top `num_heatmaps` images.
-            for img_idx in range(len(imgs)):
-                if batch_idx * args.batch_size + img_idx \
-                        >= args.num_heatmaps:
-                    break
-
-                heatmaps.append(create_heatmap(unnormalize(imgs[img_idx]),
-                                               acts_u_resized[img_idx]))
-
-                # Get the top `s` words that the model predicted.
-                W_u_i = [glove_idx.item()
-                         for glove_idx in word_preds_per_img[img_idx]]
-
-                # Calculate the ground-truth words.
-                R_x = acts_u_resized[img_idx] > thresholds_act_masking[u]
-
-                # If you want to check the baseline, uncomment the following:
-                # most_common_coco_words = [
-                #     "person", "car", "chair", "book", "bottle",
-                #     "cup", "dining", "table", "bowl", "traffic",
-                #     "light", "handbag", "umbrella", "bird", "boat",
-                #     "truck", "bench", "sheep", "banana", "kite"
-                # ][:args.s]
-                # W_u_i = [glove.stoi[word] for word in most_common_coco_words]
-                # R_x = torch.ones_like(acts_u_resized[img_idx]).bool()
-
-                masks_img_resized = F.interpolate(masks[img_idx],
-                                                  size=imgs.shape[-2:],
-                                                  mode="nearest").bool()
-                targets_img = targets[img_idx]
-                G_u_i = []
-                for M_j, t_j in zip(masks_img_resized, targets_img):
-                    IoU = (R_x & M_j).sum() / (R_x | M_j).sum()
-                    if IoU > args.threshold_iou:
-                        G_u_i.append(t_j.item())
-
-                print(f"Predicted words: {[glove.itos[i] for i in W_u_i]}")
-                print(f"Ground-truth words: {[glove.itos[i] for i in G_u_i]}")
-
-                # Compute the recall.
-                if len(G_u_i) == 0:
-                    continue
-                recall_u_i = len(set(G_u_i) & set(W_u_i)) / len(G_u_i)
-                recall += recall_u_i
-                recall_terms += 1
 
         # Sort the predicteded words by their frequencies.
         words, counts = torch.unique(word_preds, return_counts=True)
@@ -436,6 +427,11 @@ def main(args: argparse.Namespace):
     Args:
         args (argparse.Namespace): The command line arguments.
     """
+    # Make sure the run is deterministic and reproducible.
+    set_seed(args.seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
     # Set up run name.
     if args.name is None:
         args.name = f"{args.model}-{args.layer_target}-imagenet-{args.refer}"
@@ -506,14 +502,26 @@ def main(args: argparse.Namespace):
     if args.refer == "coco":
         # Set up COCO dataset.
         root = os.path.join(args.dir_data, "coco")
-        dataset = CocoImages(
-            ann_file=os.path.join(root, "annotations/instances_val2017.json"),
+        datasets = {}
+        datasets["train"] = CocoImages(
+            ann_file=os.path.join(root,
+                                  "annotations/instances_train2017.json"),
+            root=os.path.join(root, "train2017"),
+            cat_mappings_file=os.path.join(root, "cat_mappings.pkl"),
+            transform=data_transforms["train"],
+            filter_width=filter_width,
+            filter_height=filter_height
+        )
+        datasets["val"] = CocoImages(
+            ann_file=os.path.join(root,
+                                  "annotations/instances_val2017.json"),
             root=os.path.join(root, "val2017"),
             cat_mappings_file=os.path.join(root, "cat_mappings.pkl"),
             transform=data_transforms["val"],
             filter_width=filter_width,
             filter_height=filter_height
         )
+        dataset = ConcatDataset([datasets["train"], datasets["val"]])
     elif args.refer == "vg":
         # Set up Visual Genome dataset.
         root = os.path.join(args.dir_data, "vg")
@@ -526,7 +534,7 @@ def main(args: argparse.Namespace):
             filter_height=filter_height
         )
     else:
-        raise NotImplementedError(f"Reference dataset '{args.refer}' "
+        raise NotImplementedError(f"Reference dataset '{args.refer}' is "
                                   "not implemented.")
 
     # Set up dataloader.
@@ -548,7 +556,7 @@ def main(args: argparse.Namespace):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--batch-size", type=int, default=1,
-                        help="Batch size data loading")
+                        help="Batch size for data loading")
     parser.add_argument("--dir-data", type=str, default="./data",
                         help="Path to the datasets")
     parser.add_argument("--dir-save", type=str, default="./outputs",
@@ -587,6 +595,8 @@ if __name__ == "__main__":
     parser.add_argument("--s", type=int, default=5,
                         help="Number of semantics contributed by each top "
                         "activated image")
+    parser.add_argument("--seed", type=int, default=42,
+                        help="Random seed to use")
     parser.add_argument("--threshold-iou", type=float, default=0.04,
                         help="Threshold for filtering out low IoU scores.")
     parser.add_argument("--u", type=list, default=list(range(0, 251, 50)),

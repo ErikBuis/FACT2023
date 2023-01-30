@@ -34,7 +34,7 @@ rm "$vg_dir"/objects.json.zip
 
 # Run the script to pre-process the dataset.
 echo "Creating the dataset..."
-python3 "$vg_dir"/preprocess_vg.py
+python3 preprocess_vg.py
 
 # Remove the original annotations file.
 rm "$vg_dir"/vg_objects.json
