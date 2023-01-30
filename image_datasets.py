@@ -528,7 +528,8 @@ class CocoInstances(_CocoAbstract):
         target = torch.zeros((len(self.cat_mappings["stoi"]),))
         cat = self.coco.loadCats(ann["category_id"])[0]
         for cat_token in cat["name"].split():
-            target[self.cat_token_to_vector_idx[cat_token]] = 1
+            if cat_token in self.cat_mappings["stoi"]:
+                target[self.cat_token_to_vector_idx[cat_token]] = 1
 
         # Load the segmentation mask for the instance.
         mask = self.mask_transform(self.coco.annToMask(ann))
