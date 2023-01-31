@@ -83,9 +83,9 @@ def main(args: argparse.Namespace):
         # The following list was created by the `statistics_coco.py` file.
         top_20_words = [
             "person", "car", "chair", "book", "bottle",
-            "cup", "dining", "table", "traffic", "light",
-            "bowl", "handbag", "bird", "boat", "truck",
-            "bench", "umbrella", "cow", "banana", "backpack"
+            "cup", "dining", "table", "bowl", "traffic",
+            "light", "handbag", "umbrella", "bird", "boat",
+            "truck", "bench", "sheep", "banana", "kite"
         ]
     elif args.refer == "vg":
         # Set up Visual Genome dataset.

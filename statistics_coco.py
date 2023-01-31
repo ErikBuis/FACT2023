@@ -14,7 +14,6 @@ coco_images_train = CocoImages(
     filter_height=224
 )
 amount_images_train = len(coco_images_train)
-print(f"Amount of images in the training set: {amount_images_train}")
 
 # Count the number of images in the validation dataset.
 coco_images_val = CocoImages(
@@ -26,7 +25,6 @@ coco_images_val = CocoImages(
     filter_height=224
 )
 amount_images_val = len(coco_images_val)
-print(f"Amount of images in the validation set: {amount_images_val}")
 
 # Count the number of instances in the training dataset.
 coco_instances_train = CocoInstances(
@@ -38,7 +36,6 @@ coco_instances_train = CocoInstances(
     filter_height=224
 )
 amount_instances_train = len(coco_instances_train)
-print(f"Amount of instances in the training set: {amount_instances_train}")
 
 # Count the number of instances in the validation dataset.
 coco_instances_val = CocoInstances(
@@ -50,6 +47,11 @@ coco_instances_val = CocoInstances(
     filter_height=224
 )
 amount_instances_val = len(coco_instances_val)
+
+# Print statistics about images and instances.
+print(f"Amount of images in the training set: {amount_images_train}")
+print(f"Amount of images in the validation set: {amount_images_val}")
+print(f"Amount of instances in the training set: {amount_instances_train}")
 print(f"Amount of instances in the validation set: {amount_instances_val}")
 
 # Count how often each category occurs in the training dataset.
@@ -69,9 +71,6 @@ amount_categories_train = len(category_counts_train)
 cats_sorted_train = sorted(category_counts_train.items(), key=lambda x: x[1],
                            reverse=True)
 print(f"Amount of categories in the training set: {amount_categories_train}")
-print("Top 20 categories in training dataset:")
-for idx, (cat_token, amount) in enumerate(cats_sorted_train[:20], start=1):
-    print(f"{idx}. {cat_token}: {amount}")
 
 # Count how often each category occurs in the validation dataset.
 cat_mappings = coco_images_val.cat_mappings
@@ -90,9 +89,33 @@ amount_categories_val = len(category_counts_val)
 cats_sorted_val = sorted(category_counts_val.items(), key=lambda x: x[1],
                          reverse=True)
 print(f"Amount of categories in the validation set: {amount_categories_val}")
-print("Top 20 categories in validation dataset:")
-for idx, (cat_token, amount) in enumerate(cats_sorted_val[:20], start=1):
+
+# Aggregate the category counts.
+category_counts = {}
+for cat_token, count in category_counts_train.items():
+    if cat_token not in category_counts:
+        category_counts[cat_token] = 0
+    category_counts[cat_token] = count
+for cat_token, count in category_counts_val.items():
+    if cat_token not in category_counts:
+        category_counts[cat_token] = 0
+    category_counts[cat_token] += count
+cats_sorted = sorted(category_counts.items(), key=lambda x: x[1], reverse=True)
+print("Top 20 categories in the dataset:")
+for idx, (cat_token, amount) in enumerate(cats_sorted[:20], start=1):
     print(f"{idx}. {cat_token}: {amount}")
+
+# Print amount of instances in top x categories.
+instances_top5_cats = sum([count for _, count in cats_sorted[:5]])
+instances_top10_cats = sum([count for _, count in cats_sorted[:10]])
+instances_top20_cats = sum([count for _, count in cats_sorted[:20]])
+instances_all_cats = sum(category_counts.values())
+r5 = instances_top5_cats / instances_all_cats
+r10 = instances_top10_cats / instances_all_cats
+r20 = instances_top20_cats / instances_all_cats
+print(f"Instances in the top 5 cats: {r5 * 100:.1f}% (recall {r5})")
+print(f"Instances in the top 10 cats: {r10 * 100:.1f}% (recall {r10})")
+print(f"Instances in the top 20 cats: {r20 * 100:.1f}% (recall {r20})")
 
 # Print totals.
 amount_images = amount_images_train + amount_images_val

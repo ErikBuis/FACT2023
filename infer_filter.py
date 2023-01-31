@@ -599,7 +599,7 @@ if __name__ == "__main__":
                         help="Random seed to use")
     parser.add_argument("--threshold-iou", type=float, default=0.04,
                         help="Threshold for filtering out low IoU scores.")
-    parser.add_argument("--u", type=list, default=list(range(0, 251, 50)),
+    parser.add_argument("--u", type=list, default=list(range(0, 256, 256//20)),
                         help="List of indices of the target filters")
     parser.add_argument("--wandb", action="store_true",
                         help="Use wandb for logging")

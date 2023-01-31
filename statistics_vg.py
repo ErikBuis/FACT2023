@@ -51,6 +51,20 @@ amount_cats = len(category_counts)
 p_cats_train = cat_frac * 100
 p_cats_val = 100 - cat_frac * 100
 cats_sorted = sorted(category_counts.items(), key=lambda x: x[1], reverse=True)
+
+# Print amount of instances in top x categories.
+instances_top5_cats = sum([count for _, count in cats_sorted[:5]])
+instances_top10_cats = sum([count for _, count in cats_sorted[:10]])
+instances_top20_cats = sum([count for _, count in cats_sorted[:20]])
+instances_all_cats = sum(category_counts.values())
+r5 = instances_top5_cats / instances_all_cats
+r10 = instances_top10_cats / instances_all_cats
+r20 = instances_top20_cats / instances_all_cats
+print(f"Instances in the top 5 cats: {r5 * 100:.1f}% (recall {r5})")
+print(f"Instances in the top 10 cats: {r10 * 100:.1f}% (recall {r10})")
+print(f"Instances in the top 20 cats: {r20 * 100:.1f}% (recall {r20})")
+
+# Print statistics about categories.
 print(f"Percentage of categories in the training set: {p_cats_train:.1f}%")
 print(f"Percentage of categories in the validation set: {p_cats_val:.1f}%")
 print(f"Amount of categories in the dataset: {amount_cats}")
