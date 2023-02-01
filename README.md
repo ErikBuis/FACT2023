@@ -47,7 +47,7 @@ python3 infer_filter.py
 ```
 
 ### Examples
-For training an explainer to explain ResNet18's layer 4 using the VG dataset, run:
+For training an explainer to explain ResNet1-8's layer 4 using the VG dataset, run:
 ```commandline
 python3 train_explainer.py --model resnet18 --layer-target layer4 --layer-classifier fc --refer vg --epochs 10
 ```
@@ -59,6 +59,10 @@ python3 train_explainer.py --model alexnet --layer-target features --layer-class
 ```
 Each epoch takes around 30 minutes on a single A100 GPU, and around an hour on a Titan RTX GPU. The trained explainer will be saved to the `outputs` folder.
 
+To run inference on the trained ResNet-18 layer 4 explainer and evaluate it with recall@20, use the following command:
+```commandline
+python3 infer_filter.py --model resnet18 --layer-target layer4 --layer-classifier fc --refer vg --path-model "path-to-trained-model-here" --s 20
+```
 # Citation of the original paper
 ```
 @inproceedings{yang2022explaining,
