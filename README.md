@@ -1,12 +1,5 @@
 # LaViSE
-This repository contains our heavily refactored code for the paper [Explaining Deep Convolutional Neural Networks via Latent Visual-Semantic Filter Attention](https://arxiv.org/abs/2204.04601) which appeared in CVPR 2022. We found the [paper's original code](https://github.com/YuYang0901/LaViSE) to be error-ridden, inefficient, poorly documented and incomplete, with key components such as the implementation of the main quantitative evaluation metric (recall) missing, which is what this version of the code aims to fix.
-
-
-# FACT at the UvA
-This repository was made as part of a project done during the course Fairness, Accountability, Confidentiality and Transparency in AI (FACT) at the University of Amsterdam (UvA) in 2023. It follows the setup of the [Machine Learning Reproducibility Challange (MLRC)](https://paperswithcode.com/rc2022).
-
-The main goal of the project was to assess the reproducibility of an existing state-of-the-art research paper in the field of FACT by reimplementing an algorithm, replicating and/or extending the experiments from the corresponding paper, and detailing findings in a report. Our report can be found [here TODO].
-
+This repository is a heavily refactored implementation of [Explaining Deep Convolutional Neural Networks via Latent Visual-Semantic Filter Attention](https://arxiv.org/abs/2204.04601) as part of the [Machine Learning Reproducibility Challange (MLRC)](https://paperswithcode.com/rc2022). The original code from the authors can be found [here](https://github.com/YuYang0901/LaViSE).
 
 # Requirements
 One of our main contributions is making the experiments and code easily reproducible. Therefore, we took the greatest care in writing the following guide to be as concise and easy to follow as possible.
