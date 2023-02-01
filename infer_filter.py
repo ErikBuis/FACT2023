@@ -207,13 +207,6 @@ def explain(method: str, model: nn.Module, imgs: torch.Tensor,
         acts *= acts_u > threshold_act_masking
     elif method == "projection":
         # Filter attention projection.
-        # TODO Check whether this is correct. The paper says:
-        # TODO "The input to the explainer, Exp(), with respect to a target
-        # TODO filter u, is computed as follows: F_k^att = a(F_u, F_k) * Fk
-        # TODO for all k, where a() computes spatial correlations between
-        # TODO filters by cosine similarity."
-        # TODO But the code seems to be different. Here, we seem to simply be
-        # TODO computing an element-wise product.
         acts *= acts_u / vector_norm(acts_u, dim=(-2, -1), keepdim=True)
     else:
         raise NotImplementedError(f"Method '{method}' is not implemented.")
@@ -603,9 +596,6 @@ if __name__ == "__main__":
                         help="List of indices of the target filters")
     parser.add_argument("--wandb", action="store_true",
                         help="Use wandb for logging")
-    # TODO This argument was effectively always true in the original code.
-    # TODO Why is this the case? This seems to be an inconsitency between the
-    # TODO paper and the code.
     parser.add_argument("--weigh-s-by-relevance", action="store_true",
                         help="For each image, multiply --s by how much the "
                         "image activates the target filter")
