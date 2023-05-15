@@ -1,8 +1,12 @@
+*Code DOI: https://zenodo.org/badge/latestdoi/585223762* \
+*OpenReview URL: https://openreview.net/forum?id=nsrHznwHhl* \
+*Paper PDF: https://openreview.net/pdf?id=nsrHznwHhl*
+
 # LaViSE
-This repository is a heavily refactored implementation of [Explaining Deep Convolutional Neural Networks via Latent Visual-Semantic Filter Attention](https://arxiv.org/abs/2204.04601) as part of the [Machine Learning Reproducibility Challange (MLRC)](https://paperswithcode.com/rc2022). The original code from the authors can be found [here](https://github.com/YuYang0901/LaViSE).
+This repository is a heavily refactored implementation of [Explaining Deep Convolutional Neural Networks via Latent Visual-Semantic Filter Attention](https://arxiv.org/abs/2204.04601) as part of the [Machine Learning Reproducibility Challange (MLRC)](https://paperswithcode.com/rc2022) 2022. The original code from the authors can be found [here](https://github.com/YuYang0901/LaViSE).
 
 # Requirements
-One of our main contributions is making the experiments and code easily reproducible. Therefore, we took the greatest care in writing the following guide to be as concise and easy to follow as possible.
+One of our main contributions is making the experiments and code easily reproducible. Therefore, we took the greatest care in writing the following guide to be as concise and easy to follow as possible. If you have any questions or comments, don't hestitate to contact us (preferably via email).
 
 ## Environment
 To set up the correct environment, we recommend downloading the [Conda](https://docs.conda.io/en/latest/) package manager. Once installed, create a new environment with the following commands:
@@ -66,9 +70,11 @@ python3 infer_filter.py --model resnet18 --layer-target layer4 --layer-classifie
 # Citation of the original paper
 ```
 @inproceedings{yang2022explaining,
-    author    = {Yang, Yu and Kim, Seungbae and Joo, Jungseock},
-    title     = {Explaining Deep Convolutional Neural Networks via Unsupervised Visual-Semantic Filter Attention},
-    booktitle = {Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
-    year      = {2022},
+  author    = {Yang, Yu and Kim, Seungbae and Joo, Jungseock},
+  title     = {Explaining Deep Convolutional Neural Networks via Unsupervised Visual-Semantic Filter Attention},
+  booktitle = {2022 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
+  year      = {2022},
+  pages     = {8323-8333},
+  doi       = {10.1109/CVPR52688.2022.00815}
 }
 ```
