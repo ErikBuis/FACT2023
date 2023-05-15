@@ -1,6 +1,6 @@
-*Code DOI: https://zenodo.org/badge/latestdoi/585223762* \
-*OpenReview URL: https://openreview.net/forum?id=nsrHznwHhl* \
-*Paper PDF: https://openreview.net/pdf?id=nsrHznwHhl*
+Code DOI: https://zenodo.org/badge/latestdoi/585223762 <br />
+OpenReview URL: https://openreview.net/forum?id=nsrHznwHhl <br />
+Paper PDF: https://openreview.net/pdf?id=nsrHznwHhl
 
 # LaViSE
 This repository is a heavily refactored implementation of [Explaining Deep Convolutional Neural Networks via Latent Visual-Semantic Filter Attention](https://arxiv.org/abs/2204.04601) as part of the [Machine Learning Reproducibility Challange (MLRC)](https://paperswithcode.com/rc2022) 2022. The original code from the authors can be found [here](https://github.com/YuYang0901/LaViSE).
